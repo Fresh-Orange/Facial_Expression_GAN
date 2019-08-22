@@ -46,8 +46,8 @@ def main():
     # For fast training.
     cudnn.benchmark = True
 
-    loader = data_loader.get_loader("/media/data2/laixc/AI_DATA/expression_transfer/face1/crop_face",
-                                         "/media/data2/laixc/AI_DATA/expression_transfer/face1/points_face")
+    loader = data_loader.get_loader("/media/data2/laixc/AI_DATA/expression_transfer/face12/crop_face",
+                                         "/media/data2/laixc/AI_DATA/expression_transfer/face12/points_face")
     points_G = LandMarksDetect()
     G = ExpressionGenerater()
     D = RealFakeDiscriminator()
@@ -55,7 +55,7 @@ def main():
     #######   载入预训练网络   ######
     points_G_path = os.path.join("/media/data2/laixc/Facial_Expression_GAN/face2keypoint_ckpt", '{}-G.ckpt'.format(45000))
     points_G.load_state_dict(torch.load(points_G_path, map_location=lambda storage, loc: storage))
-    resume_iter = 50000
+    resume_iter = 51000
     G_path = os.path.join("/media/data2/laixc/Facial_Expression_GAN/ckpt",
                                   '{}-G.ckpt'.format(resume_iter))
     G.load_state_dict(torch.load(G_path, map_location=lambda storage, loc: storage))
@@ -141,9 +141,9 @@ def main():
             reconstructs = G(faces_fake, origin_points)
             g_cycle_loss = torch.mean(torch.abs(reconstructs - faces))
 
-            lambda_rec = 100*(1/(i+1))+10
-            lambda_keypoint = 10*(i/25000)
-            lambda_fake = min((i+100)/500000, 1)
+            lambda_rec = 2
+            lambda_keypoint = 100
+            lambda_fake = min((i+100)/1000000, 1)
             g_loss = lambda_keypoint * g_keypoints_loss + lambda_fake*g_fake_loss + lambda_rec * g_cycle_loss
 
             G_optimizer.zero_grad()

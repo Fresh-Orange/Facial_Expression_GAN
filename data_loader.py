@@ -27,6 +27,8 @@ class FaceDataset(data.Dataset):
 
     def preprocess(self):
         for sub_dir in os.listdir(self.face_dir):
+            if int(sub_dir) >= 11000:
+                continue
             print("Reading {}".format(sub_dir))
             full_sub_dir = os.path.join(self.face_dir, sub_dir)
             if os.path.isdir(full_sub_dir):
