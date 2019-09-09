@@ -4,12 +4,16 @@ from solver import Solver
 import data_loader
 from torch.backends import cudnn
 import torch
-from model import LandMarksDetect, RealFakeDiscriminator, ExpressionGenerater
+from model import LandMarksDetect, RealFakeDiscriminator, ExpressionGenerater, FeatureExtractNet
 from torchvision.utils import save_image
 import math
+import sys
 
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"]="5"
+if len(sys.argv) > 1:
+    os.environ["CUDA_VISIBLE_DEVICES"]=str(sys.argv[1])
+else:
+    os.environ["CUDA_VISIBLE_DEVICES"] = "5"
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
@@ -46,32 +50,54 @@ def main():
     # For fast training.
     cudnn.benchmark = True
 
+    version = "256"
+    beta1= 0.5
+    beta2 = 0.999
+
     loader = data_loader.get_loader("/media/data2/laixc/AI_DATA/expression_transfer/face12/crop_face",
                                          "/media/data2/laixc/AI_DATA/expression_transfer/face12/points_face")
     points_G = LandMarksDetect()
     G = ExpressionGenerater()
     D = RealFakeDiscriminator()
+    FEN = FeatureExtractNet()
 
     #######   载入预训练网络   ######
-    points_G_path = os.path.join("/media/data2/laixc/Facial_Expression_GAN/face2keypoint_ckpt", '{}-G.ckpt'.format(45000))
-    points_G.load_state_dict(torch.load(points_G_path, map_location=lambda storage, loc: storage))
-    resume_iter = 51000
-    G_path = os.path.join("/media/data2/laixc/Facial_Expression_GAN/ckpt",
-                                  '{}-G.ckpt'.format(resume_iter))
-    G.load_state_dict(torch.load(G_path, map_location=lambda storage, loc: storage))
+    resume_iter = 9000
+    ckpt_dir = "/media/data2/laixc/Facial_Expression_GAN/ckpt-{}".format(version)
+    if os.path.exists(os.path.join(ckpt_dir,
+                                  '{}-G.ckpt'.format(resume_iter))):
+        G_path = os.path.join(ckpt_dir,
+                              '{}-G.ckpt'.format(resume_iter))
+        G.load_state_dict(torch.load(G_path, map_location=lambda storage, loc: storage))
+
+        D_path = os.path.join(ckpt_dir,
+                              '{}-D.ckpt'.format(resume_iter))
+        D.load_state_dict(torch.load(D_path, map_location=lambda storage, loc: storage))
+
+        points_G_path = os.path.join(ckpt_dir,
+                                     '{}-pG.ckpt'.format(resume_iter))
+        points_G.load_state_dict(torch.load(points_G_path, map_location=lambda storage, loc: storage))
+    else:
+        resume_iter = 0
+
 
     #####  训练face2keypoint   ####
-    points_G_optimizer = torch.optim.Adam(points_G.parameters(), lr=0.0001)
-    G_optimizer = torch.optim.Adam(G.parameters(), lr=0.0001)
-    D_optimizer = torch.optim.Adam(D.parameters(), lr=0.0001)
+    points_G_optimizer = torch.optim.Adam(points_G.parameters(), lr=0.0001, betas=[beta1, beta2])
+    G_optimizer = torch.optim.Adam(G.parameters(), lr=0.0001, betas=[beta1, beta2])
+    D_optimizer = torch.optim.Adam(D.parameters(), lr=0.001, betas=[beta1, beta2])
     G.to(device)
     D.to(device)
     points_G.to(device)
+    FEN.to(device)
+
+    FEN.eval()
 
 
 
     # Start training from scratch or resume training.
     start_iters = resume_iter
+    trigger_rec = 1
+    data_iter = iter(loader)
 
     # Start training.
     print('Start training...')
@@ -80,10 +106,19 @@ def main():
         #                             1. Preprocess input data                                #
         # =================================================================================== #
 
-        data_iter = iter(loader)
-        faces, origin_points = next(data_iter)
-        _, target_points = next(data_iter)
+        #faces, origin_points = next(data_iter)
+        #_, target_points = next(data_iter)
+        try:
+            faces, origin_points = next(data_iter)
+        except StopIteration:
+            data_iter = iter(loader)
+            faces, origin_points = next(data_iter)
+        rand_idx = torch.randperm(origin_points.size(0))
+        target_points = origin_points[rand_idx]
+        target_faces = faces[rand_idx]
+
         faces = faces.to(device)
+        target_faces = target_faces.to(device)
         origin_points = origin_points.to(device)
         target_points = target_points.to(device)
 
@@ -107,6 +142,13 @@ def main():
         D_optimizer.zero_grad()
         Dis_loss.backward()
         D_optimizer.step()
+
+
+        # if (i + 1) % 5 == 0:
+        #     print("iter {} - d_real_loss {:.2}, d_fake_loss {:.2}, d_loss_gp {:.2}".format(i,real_loss.item(),
+        #                                                                                              fake_loss.item(),
+        #                                                                                              lambda_gp * d_loss_gp
+        #                                                                                              ))
 
         # =================================================================================== #
         #                               3. Train the keypointsDetecter                        #
@@ -141,10 +183,21 @@ def main():
             reconstructs = G(faces_fake, origin_points)
             g_cycle_loss = torch.mean(torch.abs(reconstructs - faces))
 
-            lambda_rec = 2
-            lambda_keypoint = 100
-            lambda_fake = min((i+100)/1000000, 1)
-            g_loss = lambda_keypoint * g_keypoints_loss + lambda_fake*g_fake_loss + lambda_rec * g_cycle_loss
+            l1_loss = torch.mean(torch.abs(faces_fake - target_faces))
+
+            feature_loss = torch.mean(torch.abs(FEN(faces_fake) - FEN(target_faces)))
+
+            # 轮流训练
+            # if (i+1) % 50 == 0:
+            #     trigger_rec = 1 - trigger_rec
+            #     print("trigger_rec : ", trigger_rec)
+            lambda_rec = 8  # 2 to 4 to 8
+            lambda_l1 = 4
+            lambda_keypoint = 50   # 100 to 50
+            lambda_fake = 0.05
+            lambda_feature = 2
+            g_loss = lambda_keypoint * g_keypoints_loss + lambda_fake*g_fake_loss \
+                     + lambda_rec * g_cycle_loss + lambda_l1 * l1_loss + lambda_feature*feature_loss
 
             G_optimizer.zero_grad()
             g_loss.backward()
@@ -152,12 +205,13 @@ def main():
 
             # Print out training information.
             if (i + 1) % 5 == 0:
-                print("iter {} - d_real_loss {:.2}, d_fake_loss {:.2}, d_loss_gp {:.2} , g_keypoints_loss {:.2},"
-                      "g_fake_loss {:.2}, g_cycle_loss {:.2}, detecter_loss {:.2}".format(i, real_loss.item(), fake_loss.item(), lambda_gp * d_loss_gp
+                print("iter {} - d_real_loss {:.2}, d_fake_loss {:.2}, d_loss_gp {:.2} , g_keypoints_loss {:.2}, "
+                      "g_fake_loss {:.2}, g_cycle_loss {:.2}, L1_loss {:.2}, detecter_loss {:.2}, feature_loss {:.2}".format(i, real_loss.item(), fake_loss.item(), lambda_gp * d_loss_gp
                                                                , lambda_keypoint*g_keypoints_loss.item(), lambda_fake*g_fake_loss.item()
-                                                               , lambda_rec*g_cycle_loss.item(), detecter_loss.item()))
+                                                               , lambda_rec*g_cycle_loss.item(), lambda_l1 * l1_loss, detecter_loss.item(),
+                                                                                                                    lambda_feature *feature_loss.item()))
 
-            sample_dir = "gan-sample"
+            sample_dir = "gan-sample-{}".format(version)
             if not os.path.isdir(sample_dir):
                 os.mkdir(sample_dir)
             if (i + 1) % 50 == 0:
@@ -187,7 +241,7 @@ def main():
 
 
         # Save model checkpoints.
-        model_save_dir = "ckpt"
+        model_save_dir = "ckpt-{}".format(version)
 
         if (i + 1) % 1000 == 0:
             if not os.path.isdir(model_save_dir):
@@ -199,8 +253,6 @@ def main():
             D_path = os.path.join(model_save_dir, '{}-D.ckpt'.format(i + 1))
             torch.save(D.state_dict(), D_path)
             print('Saved model checkpoints into {}...'.format(model_save_dir))
-
-
 
 if __name__ == '__main__':
     main()
