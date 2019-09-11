@@ -9,12 +9,13 @@ from torch.utils.data.sampler import Sampler
 
 
 class FaceDataset(data.Dataset):
-    def __init__(self, face_dir, keypoints_dir, transform, mode):
+    def __init__(self, face_dir, keypoints_dir, transform, mode, config):
         """Initialize and preprocess the CelebA dataset."""
         self.face_dir = face_dir
         self.keypoints_dir = keypoints_dir
         self.transform = transform
         self.mode = mode
+        self.config = config
         self.train_dataset = []
         self.test_dataset = []
         self.attr2idx = {}
@@ -31,7 +32,11 @@ class FaceDataset(data.Dataset):
         class_start_indices = []
         start_index = 0
         for sub_dir in os.listdir(self.face_dir):
-            if int(sub_dir) > 12000:
+            if int(sub_dir) > 12000 and "hard" not in self.config.dataset_level:
+                continue
+            if 12000 > int(sub_dir) > 11000 and "middle" not in self.config.dataset_level:
+                continue
+            if 11000 > int(sub_dir) > 10000 and "easy" not in self.config.dataset_level:
                 continue
             print("Reading {}".format(sub_dir))
             full_sub_dir = os.path.join(self.face_dir, sub_dir)
@@ -75,14 +80,13 @@ class SubsetRandomSampler(Sampler):
 
     def __iter__(self):
         indices_pairs = [(self.indices[i], self.indices[i+1]) for i in range(len(self.indices)-1)]
-        #print(indices_pairs)
-        #print([idx for (a, b) in indices_pairs for idx in random.sample(range(a, b), self.batch_size)])
+
         return (idx for (a, b) in indices_pairs for idx in random.sample(range(a, b), self.batch_size))
 
     def __len__(self):
         return len(self.indices)*self.batch_size
 
-def get_loader(face_dir, keypoint_dir, image_size=(224, 224),
+def get_loader(face_dir, keypoint_dir, config, image_size=(224, 224),
                batch_size=8, dataset='CelebA', mode='train', num_workers=1):
     """Build and return a data loader."""
     transform = []
@@ -91,7 +95,7 @@ def get_loader(face_dir, keypoint_dir, image_size=(224, 224),
     transform.append(T.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)))
     transform = T.Compose(transform)
 
-    dataset = FaceDataset(face_dir, keypoint_dir, transform, mode)
+    dataset = FaceDataset(face_dir, keypoint_dir, transform, mode, config)
     subsetSampler = SubsetRandomSampler(dataset.class_start_indices, batch_size)
 
     data_loader = data.DataLoader(dataset=dataset,
