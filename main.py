@@ -4,7 +4,7 @@ from solver import Solver
 import data_loader
 from torch.backends import cudnn
 import torch
-from model import LandMarksDetect, RealFakeDiscriminator, ExpressionGenerater, FeatureExtractNet
+from model import LandMarksDetect, RealFakeDiscriminator, ExpressionGenerater, FeatureExtractNet, IdDiscriminator
 from torchvision.utils import save_image
 import math
 import sys
@@ -66,6 +66,7 @@ def main(config):
     G = ExpressionGenerater()
     D = RealFakeDiscriminator()
     FEN = FeatureExtractNet()
+    id_D = IdDiscriminator()
 
     #######   载入预训练网络   ######
     resume_iter = config.resume_iter
@@ -80,6 +81,10 @@ def main(config):
                               '{}-D.ckpt'.format(resume_iter))
         D.load_state_dict(torch.load(D_path, map_location=lambda storage, loc: storage))
 
+        IdD_path = os.path.join(ckpt_dir,
+                              '{}-IdD.ckpt'.format(resume_iter))
+        id_D.load_state_dict(torch.load(IdD_path, map_location=lambda storage, loc: storage))
+
         points_G_path = os.path.join(ckpt_dir,
                                      '{}-pG.ckpt'.format(resume_iter))
         points_G.load_state_dict(torch.load(points_G_path, map_location=lambda storage, loc: storage))
@@ -91,7 +96,9 @@ def main(config):
     points_G_optimizer = torch.optim.RMSprop(points_G.parameters(), lr=0.0001)
     G_optimizer = torch.optim.RMSprop(G.parameters(), lr=0.0001)
     D_optimizer = torch.optim.RMSprop(D.parameters(), lr=0.001)
+    idD_optimizer = torch.optim.RMSprop(id_D.parameters(), lr=0.001)
     G.to(device)
+    id_D.to(device)
     D.to(device)
     points_G.to(device)
     FEN.to(device)
@@ -132,6 +139,7 @@ def main(config):
         #                               3. Train the discriminator                            #
         # =================================================================================== #
 
+        # Real fake Dis
         real_loss = - torch.mean(D(faces))  # big for real
         faces_fake = G(faces, target_points)
         fake_loss = torch.mean(D(faces_fake))  # small for fake
@@ -148,6 +156,24 @@ def main(config):
         D_optimizer.zero_grad()
         Dis_loss.backward()
         D_optimizer.step()
+
+        # ID Dis
+        id_real_loss = - torch.mean(id_D(faces, target_faces))  # big for real
+        faces_fake = G(faces, target_points)
+        id_fake_loss = torch.mean(id_D(faces, faces_fake))  # small for fake
+
+        # Compute loss for gradient penalty.
+        alpha = torch.rand(target_faces.size(0), 1, 1, 1).to(device)
+        x_hat = (alpha * target_faces.data + (1 - alpha) * faces_fake.data).requires_grad_(True)
+        out_src = id_D(faces, x_hat)
+        id_d_loss_gp = gradient_penalty(out_src, x_hat)
+
+        id_lambda_gp = 10
+        id_Dis_loss = id_real_loss + id_fake_loss + id_lambda_gp * id_d_loss_gp
+
+        idD_optimizer.zero_grad()
+        id_Dis_loss.backward()
+        idD_optimizer.step()
 
 
         # if (i + 1) % 5 == 0:
@@ -186,8 +212,9 @@ def main(config):
 
             g_fake_loss = - torch.mean(D(faces_fake))
 
-            reconstructs = G(faces_fake, origin_points)
-            g_cycle_loss = torch.mean(torch.abs(reconstructs - faces))
+            # reconstructs = G(faces_fake, origin_points)
+            # g_cycle_loss = torch.mean(torch.abs(reconstructs - faces))
+            g_id_loss = - torch.mean(id_D(faces, faces_fake))
 
             l1_loss = torch.mean(torch.abs(faces_fake - target_faces))
 
@@ -201,9 +228,10 @@ def main(config):
             lambda_l1 = config.lambda_l1
             lambda_keypoint = config.lambda_keypoint   # 100 to 50
             lambda_fake = config.lambda_fake
+            lambda_id = config.lambda_id
             lambda_feature = config.lambda_feature
             g_loss = lambda_keypoint * g_keypoints_loss + lambda_fake*g_fake_loss \
-                     + lambda_rec * g_cycle_loss + lambda_l1 * l1_loss + lambda_feature*feature_loss
+                      + lambda_id * g_id_loss + lambda_l1 * l1_loss + lambda_feature*feature_loss
 
             G_optimizer.zero_grad()
             g_loss.backward()
@@ -211,10 +239,12 @@ def main(config):
 
             # Print out training information.
             if (i + 1) % 5 == 0:
-                print("iter {} - d_real_loss {:.2}, d_fake_loss {:.2}, d_loss_gp {:.2} , g_keypoints_loss {:.2}, "
-                      "g_fake_loss {:.2}, g_cycle_loss {:.2}, L1_loss {:.2}, detecter_loss {:.2}, feature_loss {:.2}".format(i, real_loss.item(), fake_loss.item(), lambda_gp * d_loss_gp
+                print("iter {} - d_real_loss {:.2}, d_fake_loss {:.2}, d_loss_gp {:.2}, id_real_loss {:.2}, "
+                      "id_fake_loss {:.2}, id_loss_gp {:.2} , g_keypoints_loss {:.2}, "
+                      "g_fake_loss {:.2}, g_id_loss {:.2}, L1_loss {:.2}, feature_loss {:.2}".format(i, real_loss.item(), fake_loss.item(), lambda_gp * d_loss_gp
+                                                                                                     ,id_real_loss.item(), id_fake_loss.item(), id_lambda_gp * id_d_loss_gp
                                                                , lambda_keypoint*g_keypoints_loss.item(), lambda_fake*g_fake_loss.item()
-                                                               , lambda_rec*g_cycle_loss.item(), lambda_l1 * l1_loss, detecter_loss.item(),
+                                                                ,lambda_id * g_id_loss.item(), lambda_l1 * l1_loss,
                                                                                                                     lambda_feature *feature_loss.item()))
 
             sample_dir = "gan-sample-{}".format(version)
@@ -225,14 +255,14 @@ def main(config):
                     target_point = target_points[0]
                     fake_face = faces_fake[0]
                     face = faces[0]
-                    reconstruct = reconstructs[0]
+                    #reconstruct = reconstructs[0]
                     predict_point = predict_points[0]
 
                     sample_path_face = os.path.join(sample_dir, '{}-image-face.jpg'.format(i + 1))
                     save_image(denorm(face.data.cpu()), sample_path_face)
 
-                    sample_path_rec = os.path.join(sample_dir, '{}-image-reconstruct.jpg'.format(i + 1))
-                    save_image(denorm(reconstruct.data.cpu()), sample_path_rec)
+                    # sample_path_rec = os.path.join(sample_dir, '{}-image-reconstruct.jpg'.format(i + 1))
+                    # save_image(denorm(reconstruct.data.cpu()), sample_path_rec)
 
                     sample_path_fake = os.path.join(sample_dir, '{}-image-fake.jpg'.format(i + 1))
                     save_image(denorm(fake_face.data.cpu()), sample_path_fake)
@@ -243,7 +273,7 @@ def main(config):
                     sample_path_predict_points = os.path.join(sample_dir, '{}-image-predict_point.jpg'.format(i + 1))
                     save_image(denorm(predict_point.data.cpu()), sample_path_predict_points)
 
-                    print('Saved real and fake images into {}...'.format(sample_path_rec))
+                    print('Saved real and fake images into {}...'.format(sample_path_face))
 
 
         # Save model checkpoints.
@@ -261,147 +291,6 @@ def main(config):
             print('Saved model checkpoints into {}...'.format(model_save_dir))
 
 
-def generate_video(config, first_frm_file, json_file):
-    # For fast training.
-    cudnn.benchmark = True
-    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-    if len(sys.argv) > 1:
-        os.environ["CUDA_VISIBLE_DEVICES"] = config.gpu
-    else:
-        os.environ["CUDA_VISIBLE_DEVICES"] = "5"
-    global device
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-    version = config.version
-
-    G = ExpressionGenerater()
-
-    #######   载入预训练网络   ######
-    resume_iter = config.resume_iter
-    ckpt_dir = r"C:\Users\FreshOrange\Desktop\tmp"
-    if os.path.exists(os.path.join(ckpt_dir,
-                                  '{}-G.ckpt'.format(resume_iter))):
-        G_path = os.path.join(ckpt_dir,
-                              '{}-G.ckpt'.format(resume_iter))
-        G.load_state_dict(torch.load(G_path, map_location=lambda storage, loc: storage))
-    else:
-        return None
-
-    G.to(device)
-    G.eval()
-
-    #############  process data  ##########
-    def crop_face(img, bbox, keypoint):
-        flags = list()
-        points = list()
-
-        # can not detect face in some images
-        if len(bbox) == 0:
-            return None
-
-        # draw bbox
-        x, y, w, h = [int(v) for v in bbox]
-        crop_img = img[y:y + h, x:x + w]
-        return crop_img
-
-    def load_json(path):
-        with open(path, 'r') as f:
-            data = json.load(f)
-        print("load %d video annotations totally." % len(data))
-
-        vid_anns = dict()
-        for anns in data:
-            name = anns['video']
-            path = anns['video_path']
-            vid_anns[name] = {'path': path}
-            for ann in anns['annotations']:
-                idx = ann['index']
-                keypoints = ann['keypoint']
-                bbox = ann['bbox']
-                vid_anns[name][idx] = [bbox, keypoints]
-
-        return vid_anns
-
-    def draw_bbox_keypoints(img, bbox, keypoint):
-        flags = list()
-        points = list()
-
-        # can not detect face in some images
-        if len(bbox) == 0:
-            return None
-
-        points_image = np.zeros_like(img, np.uint8)
-
-        # draw bbox
-        # x, y, w, h = [int(v) for v in bbox]
-        # cv2.rectangle(img, (x, y), (x+w, y+h), (0, 0, 255), 2)
-
-        # draw points
-        for i in range(0, len(keypoint), 3):
-            x, y, flag = [int(k) for k in keypoint[i: i + 3]]
-            flags.append(flag)
-            points.append([x, y])
-            if flag == 0:  # keypoint not exist
-                continue
-            elif flag == 1:  # keypoint exist but invisible
-                cv2.circle(points_image, (x, y), 3, (0, 0, 255), -1)
-            elif flag == 2:  # keypoint exist and visible
-                cv2.circle(points_image, (x, y), 3, (0, 255, 0), -1)
-            else:
-                raise ValueError("flag of keypoint must be 0, 1, or 2.")
-
-        return crop_face(points_image, bbox, keypoint), crop_face(img, bbox, keypoint)
-
-    transform = []
-    transform.append(T.Resize((224,224)))
-    transform.append(T.ToTensor())
-    transform.append(T.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)))
-    transform = T.Compose(transform)
-
-    first_frm = Image.open(first_frm_file)
-
-    vid_annos = load_json(json_file)
-    vid_name = os.path.basename(first_frm_file)
-    vid_name = "{}.mp4".format(vid_name.split(".")[0])
-    anno = vid_annos[vid_name]
-
-    frm = cv2.imread(first_frm_file)
-    _, _, channels = frm.shape
-    size = (224, 224)
-    fourcc = cv2.VideoWriter_fourcc(*'XVID')
-    out_path = r'C:\Users\FreshOrange\Desktop\tmp\out_level2.mp4'
-    vid_writer = cv2.VideoWriter(out_path, fourcc, 10, size)
-
-    print(len(anno))
-    for idx in range(len(anno) // 2, len(anno)-1):
-        print(idx)
-        bbox, keypoint = anno[idx+1]
-        draw_frm, frm_crop = draw_bbox_keypoints(np.asarray(first_frm), bbox, keypoint)
-        frm_crop = Image.fromarray(frm_crop, 'RGB')
-        first_frm_tensor = transform(frm_crop)
-        first_frm_tensor = first_frm_tensor.unsqueeze(0)
-        img = Image.fromarray(draw_frm, 'RGB')
-        # img.show()
-        key_points = transform(img)
-        key_points = key_points.unsqueeze(0)
-        face_fake = G(first_frm_tensor, key_points)
-
-        sample_path_rec = os.path.join(r"C:\Users\FreshOrange\Desktop\tmp", '{}-image-face_fake.jpg'.format(idx + 1))
-        save_image(denorm(face_fake.data.cpu()), sample_path_rec)
-
-        frm = denorm(face_fake.data.cpu())
-        toPIL = T.ToPILImage()
-        frm = toPIL(frm.squeeze())
-
-        frm = cv2.cvtColor(np.asarray(frm), cv2.COLOR_RGB2BGR)
-
-        vid_writer.write(frm)
-    vid_writer.release()
-
-    # faces_fake = G(faces, target_points)
-
-    # TODO: 放回原视频
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
@@ -416,10 +305,8 @@ if __name__ == '__main__':
     parser.add_argument('--lambda_rec', type=float, default=8)
     parser.add_argument('--lambda_keypoint', type=float, default=100)
     parser.add_argument('--lambda_fake', type=float, default=0.1)
+    parser.add_argument('--lambda_id', type=float, default=0.1)
     parser.add_argument('--lambda_feature', type=float, default=2)
 
     config = parser.parse_args()
     main(config)
-
-    #generate_video(config, r"D:\AI_data\expression_transfer\face_test_dataset\face\test_first_frame\11048.jpg"
-    #               , r"D:\AI_data\expression_transfer\face_test_dataset\face\face_keypoint_test.json")
