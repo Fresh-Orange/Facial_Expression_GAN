@@ -193,6 +193,36 @@ class RealFakeDiscriminator(nn.Module):
         return out_src
 
 
+class IdDiscriminator(nn.Module):
+    """Discriminator network with PatchGAN."""
+
+    def __init__(self, conv_dim=64, c_dim=5, repeat_num=6):
+        super(IdDiscriminator, self).__init__()
+        layers = []
+        layers.append(nn.Conv2d(6, conv_dim, kernel_size=4, stride=2, padding=1))
+        layers.append(nn.InstanceNorm2d(conv_dim))
+        layers.append(nn.LeakyReLU(0.2))
+
+        curr_dim = conv_dim
+        for i in range(1, repeat_num):
+            layers.append(nn.Conv2d(curr_dim, curr_dim * 2, kernel_size=4, stride=2, padding=1))
+            layers.append(nn.InstanceNorm2d(conv_dim * 2))
+            layers.append(nn.LeakyReLU(0.2))
+            curr_dim = curr_dim * 2
+
+        layers.append(nn.Conv2d(curr_dim, 1, kernel_size=3, stride=1, padding=1, bias=False))
+        #layers.append(nn.Linear())
+        #layers.append(nn.Sigmoid())
+        self.main = nn.Sequential(*layers)
+
+    def forward(self, x, trans_x):
+        x = torch.cat([x, trans_x], dim=1)
+        #print(x.shape)
+        out_src = self.main(x)
+        #print(out_src.shape)
+        return out_src
+
+
 class FeatureExtractNet(nn.Module):
     def __init__(self):
         super(FeatureExtractNet, self).__init__()
