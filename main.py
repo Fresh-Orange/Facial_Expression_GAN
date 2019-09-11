@@ -8,15 +8,14 @@ from model import LandMarksDetect, RealFakeDiscriminator, ExpressionGenerater, F
 from torchvision.utils import save_image
 import math
 import sys
-
-os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
-if len(sys.argv) > 1:
-    os.environ["CUDA_VISIBLE_DEVICES"]=str(sys.argv[1])
-else:
-    os.environ["CUDA_VISIBLE_DEVICES"] = "5"
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+from PIL import Image
+from torchvision import transforms as T
+import json
+import numpy as np
+import cv2
 
 
+device = None
 
 def denorm(x):
     """Convert the range from [-1, 1] to [0, 1]."""
@@ -46,23 +45,30 @@ def gradient_penalty(y, x):
     dydx_l2norm = torch.sqrt(torch.sum(dydx**2, dim=1))
     return torch.mean((dydx_l2norm-1)**2)
 
-def main():
+def main(config):
     # For fast training.
     cudnn.benchmark = True
+    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+    if len(sys.argv) > 1:
+        os.environ["CUDA_VISIBLE_DEVICES"] = config.gpu
+    else:
+        os.environ["CUDA_VISIBLE_DEVICES"] = "5"
+    global device
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    version = "256"
+    version = config.version
     beta1= 0.5
     beta2 = 0.999
 
     loader = data_loader.get_loader("/media/data2/laixc/AI_DATA/expression_transfer/face12/crop_face",
-                                         "/media/data2/laixc/AI_DATA/expression_transfer/face12/points_face")
+                                         "/media/data2/laixc/AI_DATA/expression_transfer/face12/points_face", config)
     points_G = LandMarksDetect()
     G = ExpressionGenerater()
     D = RealFakeDiscriminator()
     FEN = FeatureExtractNet()
 
     #######   载入预训练网络   ######
-    resume_iter = 9000
+    resume_iter = config.resume_iter
     ckpt_dir = "/media/data2/laixc/Facial_Expression_GAN/ckpt-{}".format(version)
     if os.path.exists(os.path.join(ckpt_dir,
                                   '{}-G.ckpt'.format(resume_iter))):
@@ -82,9 +88,9 @@ def main():
 
 
     #####  训练face2keypoint   ####
-    points_G_optimizer = torch.optim.Adam(points_G.parameters(), lr=0.0001, betas=[beta1, beta2])
-    G_optimizer = torch.optim.Adam(G.parameters(), lr=0.0001, betas=[beta1, beta2])
-    D_optimizer = torch.optim.Adam(D.parameters(), lr=0.001, betas=[beta1, beta2])
+    points_G_optimizer = torch.optim.RMSprop(points_G.parameters(), lr=0.0001)
+    G_optimizer = torch.optim.RMSprop(G.parameters(), lr=0.0001)
+    D_optimizer = torch.optim.RMSprop(D.parameters(), lr=0.001)
     G.to(device)
     D.to(device)
     points_G.to(device)
@@ -126,9 +132,9 @@ def main():
         #                               3. Train the discriminator                            #
         # =================================================================================== #
 
-        real_loss = - torch.mean(D(faces))  # 1 for real
+        real_loss = - torch.mean(D(faces))  # big for real
         faces_fake = G(faces, target_points)
-        fake_loss = torch.mean(D(faces_fake))  # 0 for fake
+        fake_loss = torch.mean(D(faces_fake))  # small for fake
 
         # Compute loss for gradient penalty.
         alpha = torch.rand(faces.size(0), 1, 1, 1).to(device)
@@ -191,11 +197,11 @@ def main():
             # if (i+1) % 50 == 0:
             #     trigger_rec = 1 - trigger_rec
             #     print("trigger_rec : ", trigger_rec)
-            lambda_rec = 8  # 2 to 4 to 8
-            lambda_l1 = 4
-            lambda_keypoint = 50   # 100 to 50
-            lambda_fake = 0.05
-            lambda_feature = 2
+            lambda_rec = config.lambda_rec  # 2 to 4 to 8
+            lambda_l1 = config.lambda_l1
+            lambda_keypoint = config.lambda_keypoint   # 100 to 50
+            lambda_fake = config.lambda_fake
+            lambda_feature = config.lambda_feature
             g_loss = lambda_keypoint * g_keypoints_loss + lambda_fake*g_fake_loss \
                      + lambda_rec * g_cycle_loss + lambda_l1 * l1_loss + lambda_feature*feature_loss
 
@@ -254,5 +260,166 @@ def main():
             torch.save(D.state_dict(), D_path)
             print('Saved model checkpoints into {}...'.format(model_save_dir))
 
+
+def generate_video(config, first_frm_file, json_file):
+    # For fast training.
+    cudnn.benchmark = True
+    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+    if len(sys.argv) > 1:
+        os.environ["CUDA_VISIBLE_DEVICES"] = config.gpu
+    else:
+        os.environ["CUDA_VISIBLE_DEVICES"] = "5"
+    global device
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    version = config.version
+
+    G = ExpressionGenerater()
+
+    #######   载入预训练网络   ######
+    resume_iter = config.resume_iter
+    ckpt_dir = r"C:\Users\FreshOrange\Desktop\tmp"
+    if os.path.exists(os.path.join(ckpt_dir,
+                                  '{}-G.ckpt'.format(resume_iter))):
+        G_path = os.path.join(ckpt_dir,
+                              '{}-G.ckpt'.format(resume_iter))
+        G.load_state_dict(torch.load(G_path, map_location=lambda storage, loc: storage))
+    else:
+        return None
+
+    G.to(device)
+    G.eval()
+
+    #############  process data  ##########
+    def crop_face(img, bbox, keypoint):
+        flags = list()
+        points = list()
+
+        # can not detect face in some images
+        if len(bbox) == 0:
+            return None
+
+        # draw bbox
+        x, y, w, h = [int(v) for v in bbox]
+        crop_img = img[y:y + h, x:x + w]
+        return crop_img
+
+    def load_json(path):
+        with open(path, 'r') as f:
+            data = json.load(f)
+        print("load %d video annotations totally." % len(data))
+
+        vid_anns = dict()
+        for anns in data:
+            name = anns['video']
+            path = anns['video_path']
+            vid_anns[name] = {'path': path}
+            for ann in anns['annotations']:
+                idx = ann['index']
+                keypoints = ann['keypoint']
+                bbox = ann['bbox']
+                vid_anns[name][idx] = [bbox, keypoints]
+
+        return vid_anns
+
+    def draw_bbox_keypoints(img, bbox, keypoint):
+        flags = list()
+        points = list()
+
+        # can not detect face in some images
+        if len(bbox) == 0:
+            return None
+
+        points_image = np.zeros_like(img, np.uint8)
+
+        # draw bbox
+        # x, y, w, h = [int(v) for v in bbox]
+        # cv2.rectangle(img, (x, y), (x+w, y+h), (0, 0, 255), 2)
+
+        # draw points
+        for i in range(0, len(keypoint), 3):
+            x, y, flag = [int(k) for k in keypoint[i: i + 3]]
+            flags.append(flag)
+            points.append([x, y])
+            if flag == 0:  # keypoint not exist
+                continue
+            elif flag == 1:  # keypoint exist but invisible
+                cv2.circle(points_image, (x, y), 3, (0, 0, 255), -1)
+            elif flag == 2:  # keypoint exist and visible
+                cv2.circle(points_image, (x, y), 3, (0, 255, 0), -1)
+            else:
+                raise ValueError("flag of keypoint must be 0, 1, or 2.")
+
+        return crop_face(points_image, bbox, keypoint), crop_face(img, bbox, keypoint)
+
+    transform = []
+    transform.append(T.Resize((224,224)))
+    transform.append(T.ToTensor())
+    transform.append(T.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)))
+    transform = T.Compose(transform)
+
+    first_frm = Image.open(first_frm_file)
+
+    vid_annos = load_json(json_file)
+    vid_name = os.path.basename(first_frm_file)
+    vid_name = "{}.mp4".format(vid_name.split(".")[0])
+    anno = vid_annos[vid_name]
+
+    frm = cv2.imread(first_frm_file)
+    _, _, channels = frm.shape
+    size = (224, 224)
+    fourcc = cv2.VideoWriter_fourcc(*'XVID')
+    out_path = r'C:\Users\FreshOrange\Desktop\tmp\out_level2.mp4'
+    vid_writer = cv2.VideoWriter(out_path, fourcc, 10, size)
+
+    print(len(anno))
+    for idx in range(len(anno) // 2, len(anno)-1):
+        print(idx)
+        bbox, keypoint = anno[idx+1]
+        draw_frm, frm_crop = draw_bbox_keypoints(np.asarray(first_frm), bbox, keypoint)
+        frm_crop = Image.fromarray(frm_crop, 'RGB')
+        first_frm_tensor = transform(frm_crop)
+        first_frm_tensor = first_frm_tensor.unsqueeze(0)
+        img = Image.fromarray(draw_frm, 'RGB')
+        # img.show()
+        key_points = transform(img)
+        key_points = key_points.unsqueeze(0)
+        face_fake = G(first_frm_tensor, key_points)
+
+        sample_path_rec = os.path.join(r"C:\Users\FreshOrange\Desktop\tmp", '{}-image-face_fake.jpg'.format(idx + 1))
+        save_image(denorm(face_fake.data.cpu()), sample_path_rec)
+
+        frm = denorm(face_fake.data.cpu())
+        toPIL = T.ToPILImage()
+        frm = toPIL(frm.squeeze())
+
+        frm = cv2.cvtColor(np.asarray(frm), cv2.COLOR_RGB2BGR)
+
+        vid_writer.write(frm)
+    vid_writer.release()
+
+    # faces_fake = G(faces, target_points)
+
+    # TODO: 放回原视频
+
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser()
+
+    # Model configuration.
+    parser.add_argument('--resume_iter', type=int, default=14000)
+    parser.add_argument('--version', type=str, default="256-level1")
+    parser.add_argument('--dataset_level', '--list', nargs='+',
+                        default=['easy', 'middle', 'hard'])
+    parser.add_argument('--gpu', type=str, default="2")
+
+    parser.add_argument('--lambda_l1', type=float, default=4)
+    parser.add_argument('--lambda_rec', type=float, default=8)
+    parser.add_argument('--lambda_keypoint', type=float, default=100)
+    parser.add_argument('--lambda_fake', type=float, default=0.1)
+    parser.add_argument('--lambda_feature', type=float, default=2)
+
+    config = parser.parse_args()
+    main(config)
+
+    #generate_video(config, r"D:\AI_data\expression_transfer\face_test_dataset\face\test_first_frame\11048.jpg"
+    #               , r"D:\AI_data\expression_transfer\face_test_dataset\face\face_keypoint_test.json")

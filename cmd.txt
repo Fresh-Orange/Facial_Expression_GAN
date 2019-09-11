@@ -1,0 +1,12 @@
+未经验证的训练方式：
+python3 main.py --resume_iter 14000 --gpu 1 --version 256-level2 --dataset_level middle --lambda_fake 0.1 --lambda_l1 8 \
+--lambda_feature 2  --lambda_keypoint 50 --lambda_rec 2
+
+python3 main.py --resume_iter 54000 --gpu 2 --version 256-level23 --dataset_level middle hard --lambda_fake 0.1 --lambda_l1 8 \
+--lambda_feature 2  --lambda_keypoint 50 --lambda_rec 2
+
+
+训练集上效果不错，但是测试集上转头的情况不好：
+python3 main.py --resume_iter 17000 --gpu 1 --version 256-level2 --dataset_level middle --lambda_fake 0.1 --lambda_l1 8 \
+--lambda_feature 2  --lambda_keypoint 50 --lambda_rec 2
+

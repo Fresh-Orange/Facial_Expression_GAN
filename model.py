@@ -126,6 +126,7 @@ class LandMarksDetect(nn.Module):
         self.main = nn.Sequential(*layers)
 
     def forward(self, x):
+        x = x + Variable(torch.randn(x.size()).cuda() * 0.4)
         return self.main(x)
 
 class ExpressionGenerater(nn.Module):
