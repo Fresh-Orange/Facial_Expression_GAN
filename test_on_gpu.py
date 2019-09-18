@@ -202,7 +202,6 @@ def generate_video(config, first_frm_file, json_file):
     print(len(anno))
     frm_crop = None
     is_first = True
-    fake_frm_copy = None
     for idx in range(len(anno)-1):
         print(idx)
         # if (idx+1) % 5 != 1:
@@ -210,6 +209,7 @@ def generate_video(config, first_frm_file, json_file):
 
         bbox, keypoint = anno[idx+1]
         if is_first:
+            is_first = False
             draw_frm, frm_crop = draw_bbox_keypoints(np.asarray(first_frm), bbox, keypoint)
             if draw_frm is None:
                 continue
@@ -236,11 +236,18 @@ def generate_video(config, first_frm_file, json_file):
 
         toPIL = T.ToPILImage()
         frm = toPIL(frm.squeeze())
+        #
+        # frm = cv2.cvtColor(np.asarray(frm), cv2.COLOR_RGB2BGR)
 
 
         ###### 融合
         mask = np.zeros_like(first_frm, np.uint8)
         x, y, w, h = [int(v) for v in bbox]
+        # x_end, y_end, _ = mask.shape
+        # w = min(x_end-x, w)
+        # h = min(y_end-y, h)
+        # bbox[2] = w
+        # bbox[3] = h
 
         frm = frm.resize((w,h))
 
@@ -279,15 +286,9 @@ def generate_video(config, first_frm_file, json_file):
 
             return a_copy, b, c
 
-        first_knockout_copy, mask_image, mask = transform_images(first_knockout_image, mask_image, mask)
+        first_img_copy, mask_image, mask = transform_images(first_img, mask_image, mask)
 
-        if is_first:
-            is_first = False
-            fake_frm = FG(first_knockout_copy, mask_image, mask)
-        else:
-            fake_frm = FG(fake_frm_copy, mask_image, mask)
-
-
+        fake_frm = FG(first_img_copy, mask_image, mask)
 
         fake_frm = denorm(fake_frm.data.cpu())
 
@@ -295,8 +296,6 @@ def generate_video(config, first_frm_file, json_file):
         fake_frm = toPIL(fake_frm.squeeze())
         #
         fake_frm = cv2.cvtColor(np.asarray(fake_frm), cv2.COLOR_RGB2BGR)
-
-        fake_frm_copy = fake_frm.copy()
 
         cv2.imwrite("test_result/fake_frm_{}.jpg".format(idx), fake_frm)
 
