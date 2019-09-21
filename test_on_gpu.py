@@ -51,7 +51,7 @@ def generate_video(config, first_frm_file, json_file):
     FG_path = os.path.join(ckpt_dir,
                           '{}-G.ckpt'.format(config.fusion_resume_iter))
     FG.load_state_dict(torch.load(FG_path, map_location=lambda storage, loc: storage))
-    FG.eval()
+    # FG.eval()
 
     #######   载入预训练网络   ######
     resume_iter = config.resume_iter
@@ -186,22 +186,23 @@ def generate_video(config, first_frm_file, json_file):
     _, first_knockout_image, _, first_img, _ = extract_image(np.array(first_frm), first_bbox, first_keypoint)
 
     frm = cv2.imread(first_frm_file)
-    _, _, channels = frm.shape
-    size = (544, 720)
+    width, heigth, channels = frm.shape
+    size = (width, heigth)
     fourcc = cv2.VideoWriter_fourcc(*'XVID')
-    sample_dir = "gan-sample-{}".format(version)
+    if not os.path.isdir("test_result"):
+        os.mkdir("test_result")
+    sample_dir = "test_result/gan-sample-{}".format(version)
     if not os.path.isdir(sample_dir):
         os.mkdir(sample_dir)
     out_path = os.path.join(sample_dir, 'out_{}_{}_{}.mp4'.format(config.version, config.test_image, config.resume_iter))
-    vid_writer = cv2.VideoWriter(out_path, fourcc, 10, size)
+    vid_writer = cv2.VideoWriter(out_path, fourcc, 25, size)
 
 
 
-    if not os.path.isdir("test_result"):
-        os.mkdir("test_result")
     print(len(anno))
     frm_crop = None
     is_first = True
+    fake_frm_copy = None
     for idx in range(len(anno)-1):
         print(idx)
         # if (idx+1) % 5 != 1:
@@ -209,7 +210,6 @@ def generate_video(config, first_frm_file, json_file):
 
         bbox, keypoint = anno[idx+1]
         if is_first:
-            is_first = False
             draw_frm, frm_crop = draw_bbox_keypoints(np.asarray(first_frm), bbox, keypoint)
             if draw_frm is None:
                 continue
@@ -236,18 +236,11 @@ def generate_video(config, first_frm_file, json_file):
 
         toPIL = T.ToPILImage()
         frm = toPIL(frm.squeeze())
-        #
-        # frm = cv2.cvtColor(np.asarray(frm), cv2.COLOR_RGB2BGR)
 
 
         ###### 融合
         mask = np.zeros_like(first_frm, np.uint8)
         x, y, w, h = [int(v) for v in bbox]
-        # x_end, y_end, _ = mask.shape
-        # w = min(x_end-x, w)
-        # h = min(y_end-y, h)
-        # bbox[2] = w
-        # bbox[3] = h
 
         frm = frm.resize((w,h))
 
@@ -269,16 +262,17 @@ def generate_video(config, first_frm_file, json_file):
             transform = []
             transform.append(T.Resize((720, 544)))
             transform.append(T.ToTensor())
-            transform.append(T.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)))
+            transform.append(T.Normalize(mean=(0.5, 0.5, 0.5), std=(0.1, 0.5, 0.1)))
             transform = T.Compose(transform)
 
             a_copy = Image.fromarray(a, 'RGB')
             b = Image.fromarray(b, 'RGB')
             c = Image.fromarray(c, 'RGB')
 
-            a_copy = transform(a_copy)
             b = transform(b)
             c = transform(c)
+
+            a_copy = transform(a_copy)
 
             a_copy = a_copy.unsqueeze(0)
             b = b.unsqueeze(0)
@@ -286,20 +280,26 @@ def generate_video(config, first_frm_file, json_file):
 
             return a_copy, b, c
 
-        first_img_copy, mask_image, mask = transform_images(first_img, mask_image, mask)
 
-        fake_frm = FG(first_img_copy, mask_image, mask)
 
-        fake_frm = denorm(fake_frm.data.cpu())
+        if is_first:
+            is_first = False
+            first_knockout_copy, mask_image, mask = transform_images(first_knockout_image, mask_image, mask)
+            fake_frm = FG(first_knockout_copy, mask_image, mask)
+        else:
+            fake_frm_copy = np.asarray(Image.open(fake_frm_copy))
+            fake_frm_copy, mask_image, mask = transform_images(fake_frm_copy, mask_image, mask)
+            fake_frm = FG(fake_frm_copy, mask_image, mask)
 
-        toPIL = T.ToPILImage()
-        fake_frm = toPIL(fake_frm.squeeze())
-        #
-        fake_frm = cv2.cvtColor(np.asarray(fake_frm), cv2.COLOR_RGB2BGR)
+        print("shape", fake_frm.data.cpu().shape)
+        fake_frm = to_image(fake_frm.data.cpu()[0])
 
-        cv2.imwrite("test_result/fake_frm_{}.jpg".format(idx), fake_frm)
+        fake_frm = Image.fromarray(fake_frm)
 
-        vid_writer.write(fake_frm)
+        fake_frm_copy = "test_result/fake_frm_{}.jpg".format(idx)
+        fake_frm.save("test_result/fake_frm_{}.jpg".format(idx), quality=95)
+
+        #vid_writer.write(fake_frm)
     vid_writer.release()
 
     # faces_fake = G(faces, target_points)
@@ -312,9 +312,9 @@ if __name__ == '__main__':
 
     # Model configuration.
     parser.add_argument('--resume_iter', type=int, default=11000)
-    parser.add_argument('--fusion_resume_iter', type=int, default=70000)
+    parser.add_argument('--fusion_resume_iter', type=int, default=50000)
     parser.add_argument('--version', type=str, default="256-level2-ID")
-    parser.add_argument('--fusion_version', type=str, default="256-level2_ID")
+    parser.add_argument('--fusion_version', type=str, default="level2_fusion_v3")
     parser.add_argument('--gpu', type=str, default="2")
     parser.add_argument('--test_image', type=int, default=11048)
 
