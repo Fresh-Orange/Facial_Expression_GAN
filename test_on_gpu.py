@@ -13,6 +13,7 @@ from torchvision import transforms as T
 import json
 import numpy as np
 import cv2
+from tqdm import tqdm
 
 
 device = None
@@ -51,7 +52,8 @@ def generate_video(config, first_frm_file, json_file):
     FG_path = os.path.join(ckpt_dir,
                           '{}-G.ckpt'.format(config.fusion_resume_iter))
     FG.load_state_dict(torch.load(FG_path, map_location=lambda storage, loc: storage))
-    # FG.eval()
+    FG.to(device)
+    FG.eval()
 
     #######   载入预训练网络   ######
     resume_iter = config.resume_iter
@@ -61,11 +63,15 @@ def generate_video(config, first_frm_file, json_file):
         G_path = os.path.join(ckpt_dir,
                               '{}-G.ckpt'.format(resume_iter))
         G.load_state_dict(torch.load(G_path, map_location=lambda storage, loc: storage))
+        print("load ckpt")
     else:
+        print("found no ckpt")
         return None
 
     G.to(device)
     G.eval()
+
+    cv2.resize()
 
     #############  process data  ##########
     def crop_face(img, bbox, keypoint):
@@ -143,7 +149,7 @@ def generate_video(config, first_frm_file, json_file):
 
         # draw bbox
         x, y, w, h = [int(v) for v in bbox]
-        print(x,y,w,h)
+        # print(x,y,w,h)
         cv2.rectangle(mask_image, (x, y), (x + w, y + h), (255, 255, 255), cv2.FILLED)
 
         cv2.rectangle(Knockout_image, (x, y), (x + w, y + h), (0, 0, 0), cv2.FILLED)
@@ -152,22 +158,22 @@ def generate_video(config, first_frm_file, json_file):
 
         onlyface = img*mask
 
-        mask_points = mask_image.copy()
-        # draw points
-        for i in range(0, len(keypoint), 3):
-            x, y, flag = [int(k) for k in keypoint[i: i + 3]]
-            flags.append(flag)
-            points.append([x, y])
-            if flag == 0:  # keypoint not exist
-                continue
-            elif flag == 1:  # keypoint exist but invisible
-                cv2.circle(mask_points, (x, y), 3, (0, 0, 255), -1)
-            elif flag == 2:  # keypoint exist and visible
-                cv2.circle(mask_points, (x, y), 3, (0, 255, 0), -1)
-            else:
-                raise ValueError("flag of keypoint must be 0, 1, or 2.")
+        # mask_points = mask_image.copy()
+        # # draw points
+        # for i in range(0, len(keypoint), 3):
+        #     x, y, flag = [int(k) for k in keypoint[i: i + 3]]
+        #     flags.append(flag)
+        #     points.append([x, y])
+        #     if flag == 0:  # keypoint not exist
+        #         continue
+        #     elif flag == 1:  # keypoint exist but invisible
+        #         cv2.circle(mask_points, (x, y), 3, (0, 0, 255), -1)
+        #     elif flag == 2:  # keypoint exist and visible
+        #         cv2.circle(mask_points, (x, y), 3, (0, 255, 0), -1)
+        #     else:
+        #         raise ValueError("flag of keypoint must be 0, 1, or 2.")
 
-        return mask_image, Knockout_image, onlyface, img, mask_points
+        return mask_image, Knockout_image, onlyface, img, None
 
     transform = []
     transform.append(T.Resize((224,224)))
@@ -186,7 +192,8 @@ def generate_video(config, first_frm_file, json_file):
     _, first_knockout_image, _, first_img, _ = extract_image(np.array(first_frm), first_bbox, first_keypoint)
 
     frm = cv2.imread(first_frm_file)
-    width, heigth, channels = frm.shape
+    heigth, width, channels = frm.shape
+    #print(heigth, width)
     size = (width, heigth)
     fourcc = cv2.VideoWriter_fourcc(*'XVID')
     if not os.path.isdir("test_result"):
@@ -194,31 +201,41 @@ def generate_video(config, first_frm_file, json_file):
     sample_dir = "test_result/gan-sample-{}".format(version)
     if not os.path.isdir(sample_dir):
         os.mkdir(sample_dir)
-    out_path = os.path.join(sample_dir, 'out_{}_{}_{}.mp4'.format(config.version, config.test_image, config.resume_iter))
+    out_path = os.path.join(sample_dir, '{}.mp4'.format(config.test_image))
     vid_writer = cv2.VideoWriter(out_path, fourcc, 25, size)
 
 
 
-    print(len(anno))
+    #print(len(anno))
     frm_crop = None
     is_first = True
-    fake_frm_copy = None
-    for idx in range(len(anno)-1):
-        print(idx)
+    fake_frm = None
+    for idx in tqdm(range(len(anno)-1)):
+        #print(idx)
         # if (idx+1) % 5 != 1:
         #     continue
 
         bbox, keypoint = anno[idx+1]
+        if len(bbox) >= 2:
+            bbox[0] = max(0, bbox[0])
+            bbox[1] = max(0, bbox[1])
+        # print("bbox ", bbox)
         if is_first:
+            is_first = False
             draw_frm, frm_crop = draw_bbox_keypoints(np.asarray(first_frm), bbox, keypoint)
             if draw_frm is None:
+                print("1 no bbox")
+                vid_writer.write(frm)
                 continue
             frm_crop_arr = Image.fromarray(frm_crop, 'RGB')
+            #frm_crop_arr.save("test_result/first.jpg")
             first_frm_tensor = transform(frm_crop_arr)
             first_frm_tensor = first_frm_tensor.unsqueeze(0)
         else:
             draw_frm, _ = draw_bbox_keypoints(np.asarray(first_frm), bbox, keypoint)
             if draw_frm is None:
+                print("no bbox")
+                vid_writer.write(fake_frm)
                 continue
             frm_crop_arr = Image.fromarray(frm_crop, 'RGB')
             first_frm_tensor = transform(frm_crop_arr)
@@ -236,25 +253,31 @@ def generate_video(config, first_frm_file, json_file):
 
         toPIL = T.ToPILImage()
         frm = toPIL(frm.squeeze())
-
+        #
+        save_frm = cv2.cvtColor(np.asarray(frm), cv2.COLOR_RGB2BGR)
+        cv2.imwrite("test_result/fake_face_{}.jpg".format(idx), save_frm)
 
         ###### 融合
         mask = np.zeros_like(first_frm, np.uint8)
         x, y, w, h = [int(v) for v in bbox]
+        #print(x, y, w, h)
+        # x_end, y_end, _ = mask.shape
+        w = min(width-x, w)
+        h = min(heigth-y, h)
+        bbox[2] = w
+        bbox[3] = h
 
         frm = frm.resize((w,h))
 
         frm = np.asarray(frm)
-        print(mask.shape)
-        print(x, y)
-        print(w, h)
+        # print(mask.shape)
+        # print(x, y)
+        # print(w, h)
         mask[y:y+h, x:x+w, :] = frm[:,:,:]
 
-        cv2.imwrite("test_result/maskface_{}.jpg".format(idx), cv2.cvtColor(np.asarray(mask), cv2.COLOR_RGB2BGR))
+        #cv2.imwrite("test_result/maskface_{}.jpg".format(idx), cv2.cvtColor(np.asarray(mask), cv2.COLOR_RGB2BGR))
 
-        mask_image, Knockout_image, onlyface, img, mask_points = extract_image(mask, bbox, keypoint)
-
-        cv2.imwrite("test_result/mask_{}.jpg".format(idx), mask_points)
+        mask_image, Knockout_image, onlyface, img, _ = extract_image(mask, bbox, keypoint)
 
 
         ### TODO: here i have  mask_points, maskface, Knockout_image
@@ -262,17 +285,16 @@ def generate_video(config, first_frm_file, json_file):
             transform = []
             transform.append(T.Resize((720, 544)))
             transform.append(T.ToTensor())
-            transform.append(T.Normalize(mean=(0.5, 0.5, 0.5), std=(0.1, 0.5, 0.1)))
+            transform.append(T.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)))
             transform = T.Compose(transform)
 
             a_copy = Image.fromarray(a, 'RGB')
             b = Image.fromarray(b, 'RGB')
             c = Image.fromarray(c, 'RGB')
 
+            a_copy = transform(a_copy)
             b = transform(b)
             c = transform(c)
-
-            a_copy = transform(a_copy)
 
             a_copy = a_copy.unsqueeze(0)
             b = b.unsqueeze(0)
@@ -280,26 +302,23 @@ def generate_video(config, first_frm_file, json_file):
 
             return a_copy, b, c
 
+        first_img_copy, mask_image, mask = transform_images(first_knockout_image, mask_image, mask)
 
+        first_img_copy, mask_image, mask = first_img_copy.to(device), mask_image.to(device), mask.to(device)
 
-        if is_first:
-            is_first = False
-            first_knockout_copy, mask_image, mask = transform_images(first_knockout_image, mask_image, mask)
-            fake_frm = FG(first_knockout_copy, mask_image, mask)
-        else:
-            fake_frm_copy = np.asarray(Image.open(fake_frm_copy))
-            fake_frm_copy, mask_image, mask = transform_images(fake_frm_copy, mask_image, mask)
-            fake_frm = FG(fake_frm_copy, mask_image, mask)
+        fake_frm = FG(first_img_copy, mask_image, mask)
 
-        print("shape", fake_frm.data.cpu().shape)
-        fake_frm = to_image(fake_frm.data.cpu()[0])
+        fake_frm = denorm(fake_frm.data.cpu())
 
-        fake_frm = Image.fromarray(fake_frm)
+        toPIL = T.ToPILImage()
+        fake_frm = toPIL(fake_frm.squeeze())
+        #
+        fake_frm = cv2.cvtColor(np.asarray(fake_frm), cv2.COLOR_RGB2BGR)
+        fake_frm = cv2.resize(fake_frm, (width, heigth))
 
-        fake_frm_copy = "test_result/fake_frm_{}.jpg".format(idx)
-        fake_frm.save("test_result/fake_frm_{}.jpg".format(idx), quality=95)
+        #cv2.imwrite("test_result/fake_frm_{}.jpg".format(idx), fake_frm)
 
-        #vid_writer.write(fake_frm)
+        vid_writer.write(fake_frm)
     vid_writer.release()
 
     # faces_fake = G(faces, target_points)
@@ -312,9 +331,9 @@ if __name__ == '__main__':
 
     # Model configuration.
     parser.add_argument('--resume_iter', type=int, default=11000)
-    parser.add_argument('--fusion_resume_iter', type=int, default=50000)
-    parser.add_argument('--version', type=str, default="256-level2-ID")
-    parser.add_argument('--fusion_version', type=str, default="level2_fusion_v3")
+    parser.add_argument('--fusion_resume_iter', type=int, default=100000)
+    parser.add_argument('--version', type=str, default="256-level2")
+    parser.add_argument('--fusion_version', type=str, default="level2-knockout")
     parser.add_argument('--gpu', type=str, default="2")
     parser.add_argument('--test_image', type=int, default=11048)
 
@@ -324,3 +343,6 @@ if __name__ == '__main__':
     generate_video(config, "/media/data2/laixc/AI_DATA/expression_transfer/face_test_dataset/face/test_first_frame/{}.jpg".format(config.test_image)
                    , "/media/data2/laixc/AI_DATA/expression_transfer/face_test_dataset/face/face_keypoint_test.json")
 
+# 问题  11027
+# 11039 tile cannot extend outside image
+# 11082 ValueError: could not broadcast input array from shape (506,500,3) into shape (506,490,3)
