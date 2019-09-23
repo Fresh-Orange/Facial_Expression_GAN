@@ -47,13 +47,6 @@ def generate_video(config, first_frm_file, json_file):
 
     G = ExpressionGenerater()
 
-    ckpt_dir = "/media/data2/laixc/Facial_Expression_GAN/fusion-ckpt-{}".format(config.fusion_version)
-    FG = FusionGenerater()
-    FG_path = os.path.join(ckpt_dir,
-                          '{}-G.ckpt'.format(config.fusion_resume_iter))
-    FG.load_state_dict(torch.load(FG_path, map_location=lambda storage, loc: storage))
-    FG.to(device)
-    FG.eval()
 
     #######   载入预训练网络   ######
     resume_iter = config.resume_iter
@@ -70,8 +63,6 @@ def generate_video(config, first_frm_file, json_file):
 
     G.to(device)
     G.eval()
-
-    cv2.resize()
 
     #############  process data  ##########
     def crop_face(img, bbox, keypoint):
@@ -152,7 +143,7 @@ def generate_video(config, first_frm_file, json_file):
         # print(x,y,w,h)
         cv2.rectangle(mask_image, (x, y), (x + w, y + h), (255, 255, 255), cv2.FILLED)
 
-        cv2.rectangle(Knockout_image, (x, y), (x + w, y + h), (0, 0, 0), cv2.FILLED)
+        cv2.rectangle(Knockout_image, (x, y), (x + w, y + h), np.mean(img[y:y+h, x:x+w, :], axis=(0, 1)), cv2.FILLED)
 
         mask = cv2.rectangle(mask, (x, y), (x+w, y+h), (1, 1, 1), cv2.FILLED)
 
@@ -258,7 +249,7 @@ def generate_video(config, first_frm_file, json_file):
         cv2.imwrite("test_result/fake_face_{}.jpg".format(idx), save_frm)
 
         ###### 融合
-        mask = np.zeros_like(first_frm, np.uint8)
+        first_frm_out = np.copy(first_knockout_image)
         x, y, w, h = [int(v) for v in bbox]
         #print(x, y, w, h)
         # x_end, y_end, _ = mask.shape
@@ -273,47 +264,9 @@ def generate_video(config, first_frm_file, json_file):
         # print(mask.shape)
         # print(x, y)
         # print(w, h)
-        mask[y:y+h, x:x+w, :] = frm[:,:,:]
+        first_frm_out[y:y+h, x:x+w, :] = frm[:,:,:]
 
-        #cv2.imwrite("test_result/maskface_{}.jpg".format(idx), cv2.cvtColor(np.asarray(mask), cv2.COLOR_RGB2BGR))
-
-        mask_image, Knockout_image, onlyface, img, _ = extract_image(mask, bbox, keypoint)
-
-
-        ### TODO: here i have  mask_points, maskface, Knockout_image
-        def transform_images(a, b, c):
-            transform = []
-            transform.append(T.Resize((720, 544)))
-            transform.append(T.ToTensor())
-            transform.append(T.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)))
-            transform = T.Compose(transform)
-
-            a_copy = Image.fromarray(a, 'RGB')
-            b = Image.fromarray(b, 'RGB')
-            c = Image.fromarray(c, 'RGB')
-
-            a_copy = transform(a_copy)
-            b = transform(b)
-            c = transform(c)
-
-            a_copy = a_copy.unsqueeze(0)
-            b = b.unsqueeze(0)
-            c = c.unsqueeze(0)
-
-            return a_copy, b, c
-
-        first_img_copy, mask_image, mask = transform_images(first_knockout_image, mask_image, mask)
-
-        first_img_copy, mask_image, mask = first_img_copy.to(device), mask_image.to(device), mask.to(device)
-
-        fake_frm = FG(first_img_copy, mask_image, mask)
-
-        fake_frm = denorm(fake_frm.data.cpu())
-
-        toPIL = T.ToPILImage()
-        fake_frm = toPIL(fake_frm.squeeze())
-        #
-        fake_frm = cv2.cvtColor(np.asarray(fake_frm), cv2.COLOR_RGB2BGR)
+        fake_frm = cv2.cvtColor(first_frm_out, cv2.COLOR_RGB2BGR)
         fake_frm = cv2.resize(fake_frm, (width, heigth))
 
         #cv2.imwrite("test_result/fake_frm_{}.jpg".format(idx), fake_frm)
@@ -331,9 +284,7 @@ if __name__ == '__main__':
 
     # Model configuration.
     parser.add_argument('--resume_iter', type=int, default=11000)
-    parser.add_argument('--fusion_resume_iter', type=int, default=100000)
     parser.add_argument('--version', type=str, default="256-level2")
-    parser.add_argument('--fusion_version', type=str, default="level2-knockout")
     parser.add_argument('--gpu', type=str, default="2")
     parser.add_argument('--test_image', type=int, default=11048)
 
