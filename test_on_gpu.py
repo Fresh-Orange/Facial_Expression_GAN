@@ -121,8 +121,7 @@ class VideoGenerator():
         # cv2.rectangle(img, (x, y), (x+w, y+h), (0, 0, 255), 2)
         # draw points
         def ratio(w):
-            r = w / 224
-            return int(3*r)
+            return max(1, int(3 * w / 224))
             # if w > 200:
             #     return 3
             # elif w > 100:
@@ -330,7 +329,7 @@ if __name__ == '__main__':
 
     for f in sorted(os.listdir(test_dir)):
         id = f.split(".")[0]
-        if id.startswith("1107"):#str(10+config.test_level-1)
+        if id.startswith(str(10+config.test_level-1)):
             print(id)
             VG.generate(test_file.format(id), id)
             time.sleep(1)
