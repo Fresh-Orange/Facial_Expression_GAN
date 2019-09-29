@@ -121,13 +121,13 @@ class VideoGenerator():
         # cv2.rectangle(img, (x, y), (x+w, y+h), (0, 0, 255), 2)
         # draw points
         def ratio(w):
-            return max(1, int(3 * w / 224))
-            # if w > 200:
-            #     return 3
-            # elif w > 100:
-            #     return 2
-            # else:
-            #     return 1
+            #return max(1, int(3 * w / 224))
+            if w > 200:
+                return 3
+            elif w > 100:
+                return 2
+            else:
+                return 1
 
         for i in range(0, len(keypoint), 3):
             x, y, flag = [int(k) for k in keypoint[i: i + 3]]
