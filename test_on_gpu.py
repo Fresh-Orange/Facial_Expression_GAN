@@ -120,6 +120,16 @@ class VideoGenerator():
         x, y, w, h = [int(v) for v in bbox]
         # cv2.rectangle(img, (x, y), (x+w, y+h), (0, 0, 255), 2)
         # draw points
+        def ratio(w):
+            r = w / 224
+            return int(3*r)
+            # if w > 200:
+            #     return 3
+            # elif w > 100:
+            #     return 2
+            # else:
+            #     return 1
+
         for i in range(0, len(keypoint), 3):
             x, y, flag = [int(k) for k in keypoint[i: i + 3]]
             flags.append(flag)
@@ -127,9 +137,9 @@ class VideoGenerator():
             if flag == 0:  # keypoint not exist
                 continue
             elif flag == 1:  # keypoint exist but invisible
-                cv2.circle(points_image, (x, y), min(1, 3*w//360), (0, 0, 255), -1)
+                cv2.circle(points_image, (x, y), max(1, ratio(w)), (0, 0, 255), -1)
             elif flag == 2:  # keypoint exist and visible
-                cv2.circle(points_image, (x, y), min(1, 3*w//360), (0, 255, 0), -1)
+                cv2.circle(points_image, (x, y), max(1, ratio(w)), (0, 255, 0), -1)
             else:
                 raise ValueError("flag of keypoint must be 0, 1, or 2.")
         return self.crop_face(points_image, bbox, keypoint), self.crop_face(img, bbox, keypoint)
@@ -320,7 +330,7 @@ if __name__ == '__main__':
 
     for f in sorted(os.listdir(test_dir)):
         id = f.split(".")[0]
-        if id.startswith(str(10+config.test_level-1)):
+        if id.startswith("1107"):#str(10+config.test_level-1)
             print(id)
             VG.generate(test_file.format(id), id)
             time.sleep(1)
