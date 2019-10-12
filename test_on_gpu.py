@@ -15,6 +15,7 @@ import numpy as np
 import cv2
 from tqdm import tqdm
 import time
+from bg_move_fusion import fusion
 
 
 device = None
@@ -231,63 +232,13 @@ class VideoGenerator():
             frm = toPIL(frm.squeeze())
             #
             save_frm = cv2.cvtColor(np.asarray(frm), cv2.COLOR_RGB2BGR)
-            cv2.imwrite("test_result/fake_face_{}.jpg".format(idx), save_frm)
+            #cv2.imwrite("test_result/fake_face_{}.jpg".format(idx), save_frm)
 
             ###### 融合
-            mask = np.zeros_like(first_frm, np.uint8)
-            x, y, w, h = [int(v) for v in bbox]
-            # print(x, y, w, h)
-            # x_end, y_end, _ = mask.shape
-            w = min(width - x, w)
-            h = min(heigth - y, h)
-            bbox[2] = w
-            bbox[3] = h
-
-            frm = frm.resize((w, h))
-
-            frm = np.asarray(frm)
-            # print(mask.shape)
-            # print(x, y)
-            # print(w, h)
-            mask[y:y + h, x:x + w, :] = frm[:, :, :]
-
-            # cv2.imwrite("test_result/maskface_{}.jpg".format(idx), cv2.cvtColor(np.asarray(mask), cv2.COLOR_RGB2BGR))
-
-            mask_image, Knockout_image, onlyface, img, _ = self.extract_image(mask, bbox, keypoint)
-
-            def transform_images(a, b, c):
-                transform = []
-                transform.append(T.Resize((720, 544)))
-                transform.append(T.ToTensor())
-                transform.append(T.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)))
-                transform = T.Compose(transform)
-
-                a_copy = Image.fromarray(a, 'RGB')
-                b = Image.fromarray(b, 'RGB')
-                c = Image.fromarray(c, 'RGB')
-
-                a_copy = transform(a_copy)
-                b = transform(b)
-                c = transform(c)
-
-                a_copy = a_copy.unsqueeze(0)
-                b = b.unsqueeze(0)
-                c = c.unsqueeze(0)
-
-                return a_copy, b, c
-
-            first_img_copy, mask_image, mask = transform_images(first_knockout_image, mask_image, mask)
-
-            first_img_copy, mask_image, mask = first_img_copy.to(device), mask_image.to(device), mask.to(device)
-
-            fake_frm = self.FG(first_img_copy, mask_image, mask)
-
-            fake_frm = denorm(fake_frm.data.cpu())
-
-            toPIL = T.ToPILImage()
-            fake_frm = toPIL(fake_frm.squeeze())
+            fake_frm = fusion(first_knockout_image, first_bbox, np.asarray(frm), bbox)
             #
             fake_frm = cv2.cvtColor(np.asarray(fake_frm), cv2.COLOR_RGB2BGR)
+            #cv2.imwrite("test_result/fake_frm_{}.jpg".format(idx), fake_frm)
             fake_frm = cv2.resize(fake_frm, (width, heigth))
 
             # cv2.imwrite("test_result/fake_frm_{}.jpg".format(idx), fake_frm)
