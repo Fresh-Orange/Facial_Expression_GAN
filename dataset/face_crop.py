@@ -8,40 +8,7 @@ import json
 from tqdm import tqdm
 from body_demo import VideoReader
 import numpy as np
-
-
-# the order of  keypoints show in the sample_face.jpg
-def get_face_landmark_links():
-    landmark_links = list()
-    landmark_links.extend( [[i, i+1] for i in range(32)] )        # 脸框
-
-    landmark_links.extend( [[i, i+1] for i in range(33, 37)] )    # 左眉
-    landmark_links.extend( [[i, i+1] for i in range(64, 67)] )    
-    landmark_links.extend( [[33, 64], [37, 67]] )                 
-    
-    landmark_links.extend( [[i, i+1] for i in range(38, 42)] )    # 右眉
-    landmark_links.extend( [[i, i+1] for i in range(68, 71)] )    
-    landmark_links.extend( [[38, 68], [42, 71]] )                 
-    
-    landmark_links.extend( [[52,53], [53,72], [72,54], [54,55], 
-                            [55,56], [56,73], [73,57], [57,52], 
-                            [74,72], [74,73], [104,72], [104,73]] )   # 左眼眶
-
-    landmark_links.extend( [[58,59], [59,75], [75,60], [60,61], 
-                            [61,62], [62,76], [76,63], [63,58], 
-                            [77,75], [77,76], [105,75], [105,76]] )   # 右眼眶
-
-    landmark_links.extend( [[i, i+1] for i in range(43, 46)] )    # 鼻梁
-    landmark_links.extend( [[43,78], [43,79], [46,48], [46,50]] )
-    landmark_links.extend( [[78,80], [80,82], [82,47]] )
-    landmark_links.extend( [[79,81], [81,83], [83,51]] )
-    landmark_links.extend( [[i, i+1] for i in range(47, 51)] )
-
-    landmark_links.extend( [[i, i+1] for i in range(84, 95)] )    # 嘴唇
-    landmark_links.extend( [[i, i+1] for i in range(96, 103)] )
-    landmark_links.extend( [[84,95], [84,96], [96,103], [90,100]] )
-
-    return landmark_links
+from scipy.ndimage.filters import gaussian_filter
 
 
 # load annotations of all videos
@@ -84,23 +51,25 @@ def draw_bbox_keypoints(img, bbox, keypoint):
     if len(bbox) == 0:
         return None
 
-    points_image = np.zeros_like(img, np.uint8)
+    points_image = np.zeros((224,224,3), np.uint8)
 
     # draw bbox
-    # x, y, w, h = [int(v) for v in bbox]
+    bx, by, bw, bh = [int(v) for v in bbox]
     # cv2.rectangle(img, (x, y), (x+w, y+h), (0, 0, 255), 2)
 
     # draw points
     for i in range(0, len(keypoint), 3):
         x, y, flag = [int(k) for k in keypoint[i: i+3]]
-        flags.append( flag )
-        points.append( [x, y] )
+        #flags.append( flag )
+        x = int((x - bx) / bw * 224)
+        y = int((y - by) / bh * 224)
+        #points.append( [int((x - bx) / bw * 224), int((y - by) / bh * 224)] )
         if flag == 0:      # keypoint not exist
             continue
         elif flag == 1:    # keypoint exist but invisible
-            cv2.circle(points_image, (x, y), 3, (0, 0, 255), -1)
+            cv2.circle(points_image, (x, y), 2, (0, 0, 255), -1)
         elif flag == 2:    # keypoint exist and visible
-            cv2.circle(points_image, (x, y), 3, (0, 255, 0), -1)
+            cv2.circle(points_image, (x, y), 2, (0, 255, 0), -1)
         else:
             raise ValueError("flag of keypoint must be 0, 1, or 2.")
 
@@ -113,7 +82,9 @@ def draw_bbox_keypoints(img, bbox, keypoint):
     #         x1, y1 = points[start]
     #         x2, y2 = points[end]
     #         cv2.line(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
-    return crop_face(points_image, bbox, keypoint)
+
+
+    return points_image #cv2.GaussianBlur(points_image, ksize=(7, 7), sigmaX=2)
 
 
 def crop_video(anno):
@@ -127,6 +98,7 @@ def crop_video(anno):
     video_name = os.path.basename(vid_path).split(".")[0]
     # os.mkdir("crop_face/{}".format(video_name))
     os.makedirs("points_face/{}".format(video_name), exist_ok=True)
+    #os.makedirs("points_face_gaussion/{}".format(video_name), exist_ok=True)
 
     for idx, frm in tqdm(enumerate(vid.read())):
         bbox, keypoint = anno[idx+1]
