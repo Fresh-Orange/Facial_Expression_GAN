@@ -139,9 +139,9 @@ def main(config):
         # =================================================================================== #
 
         # Real fake Dis
-        real_loss = - torch.mean(D(faces))  # big for real
+        real_loss = torch.mean(softplus(-D(faces)))  # big for real
         faces_fake = G(faces, target_points)
-        fake_loss = torch.mean(D(faces_fake))  # small for fake
+        fake_loss = torch.mean(softplus(D(faces_fake)))  # small for fake
 
         Dis_loss = real_loss + fake_loss
 
@@ -195,7 +195,7 @@ def main(config):
             predict_points = points_G(faces_fake)
             g_keypoints_loss = torch.mean(torch.abs(predict_points - target_points))
 
-            g_fake_loss = - torch.mean(D(faces_fake))
+            g_fake_loss = torch.mean(softplus(-D(faces_fake)))
 
             # reconstructs = G(faces_fake, origin_points)
             # g_cycle_loss = torch.mean(torch.abs(reconstructs - faces))
