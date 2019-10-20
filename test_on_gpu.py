@@ -3,7 +3,7 @@ import argparse
 from torch.backends import cudnn
 import torch
 from model.model import FusionGenerater
-from model.model import  BigConvExpressionGenerater as ExpressionGenerater
+from model.model import TwoPointBigConvExpressionGenerater as ExpressionGenerater
 import sys
 from PIL import Image
 from torchvision import transforms as T
@@ -177,6 +177,7 @@ class VideoGenerator():
         frm_crop = None
         is_first = True
         fake_frm = None
+        first_kp_img = None
         for idx in tqdm(range(len(anno) - 1)):
             # print(idx)
             # if (idx+1) % 5 != 1:
@@ -190,6 +191,7 @@ class VideoGenerator():
             if is_first:
                 is_first = False
                 draw_frm, frm_crop = self.draw_bbox_keypoints(np.asarray(first_frm), bbox, keypoint)
+                first_kp_img = draw_frm.copy()
                 if draw_frm is None:
                     print("1 no bbox")
                     vid_writer.write(frm)
@@ -215,13 +217,17 @@ class VideoGenerator():
                 first_frm_tensor = self.transform(frm_crop_arr)
                 first_frm_tensor = first_frm_tensor.unsqueeze(0)
 
+            first_kp = Image.fromarray(first_kp_img, 'RGB')
             img = Image.fromarray(draw_frm, 'RGB')
             # img.show()
             key_points = self.transform(img)
             key_points = key_points.unsqueeze(0)
+            first_kp = self.transform(first_kp)
+            first_kp = first_kp.unsqueeze(0)
             first_frm_tensor = first_frm_tensor.to(device)
             key_points = key_points.to(device)
-            face_fake = self.G(first_frm_tensor, key_points)
+            first_kp = first_kp.to(device)
+            face_fake = self.G(first_frm_tensor, first_kp, key_points)
 
             frm = denorm(face_fake.data.cpu())
 
