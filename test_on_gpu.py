@@ -44,8 +44,10 @@ class VideoGenerator():
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         self.version = config.version
+        self.color_version = config.color_version
 
         self.G = ExpressionGenerater()
+        self.colorG = NoTrackExpressionGenerater()
 
         ckpt_dir = "/media/data2/laixc/Facial_Expression_GAN/fusion-ckpt-{}".format(config.fusion_version)
         self.FG = FusionGenerater()
@@ -57,12 +59,17 @@ class VideoGenerator():
 
         #######   载入预训练网络   ######
         resume_iter = config.resume_iter
+        color_resume_iter = config.color_resume_iter
         ckpt_dir = "/media/data2/laixc/Facial_Expression_GAN/ckpt-{}".format(self.version)
+        color_ckpt_dir = "/media/data2/laixc/Facial_Expression_GAN/ckpt-{}".format(self.color_version)
         if os.path.exists(os.path.join(ckpt_dir,
                                        '{}-G.ckpt'.format(resume_iter))):
             G_path = os.path.join(ckpt_dir,
                                   '{}-G.ckpt'.format(resume_iter))
             self.G.load_state_dict(torch.load(G_path, map_location=lambda storage, loc: storage))
+            cG_path = os.path.join(color_ckpt_dir,
+                                  '{}-G.ckpt'.format(color_resume_iter))
+            self.colorG.load_state_dict(torch.load(cG_path, map_location=lambda storage, loc: storage))
             print("load ckpt")
         else:
             print("found no ckpt")
@@ -155,7 +162,7 @@ class VideoGenerator():
         fourcc = cv2.VideoWriter_fourcc(*'XVID')
         if not os.path.isdir("test_result"):
             os.mkdir("test_result")
-        sample_dir = "test_result/gan-sample-{}-{}-{}-{}".format(self.version, self.config.resume_iter, self.config.fusion_version, self.config.fusion_resume_iter)
+        sample_dir = "test_result/gan-sample-{}-{}".format(self.version, self.config.resume_iter)
         if not os.path.isdir(sample_dir):
             os.mkdir(sample_dir)
         out_path = os.path.join(sample_dir, '{}.mp4'.format(first_frm_id))
@@ -243,9 +250,9 @@ if __name__ == '__main__':
 
     # Model configuration.
     parser.add_argument('--resume_iter', type=int, default=11000)
-    parser.add_argument('--fusion_resume_iter', type=int, default=100000)
+    parser.add_argument('--color_resume_iter', type=int, default=3000)
     parser.add_argument('--version', type=str, default="256-level2")
-    parser.add_argument('--fusion_version', type=str, default="level2-knockout")
+    parser.add_argument('--color_version', type=str, default="256-level2_color-transfer")
     parser.add_argument('--gpu', type=str, default="2")
     parser.add_argument('--test_level', type=int, default=1)
 
