@@ -108,8 +108,6 @@ class VideoGenerator():
                 vid_anns[name][idx] = [bbox, keypoints]
         return vid_anns
     def draw_bbox_keypoints(self, img, bbox, keypoint):
-        flags = list()
-        points = list()
         # can not detect face in some images
         if len(bbox) == 0:
             return None, None
@@ -132,23 +130,13 @@ class VideoGenerator():
         return points_image, self.crop_face(img, bbox, keypoint)
 
 
-    def extract_image(self, img, bbox, keypoint):
-        flags = list()
-        points = list()
+    def extract_image(self, img, bbox):
         # can not detect face in some images
-        if len(bbox) == 0:
-            return None, None, None, None, None
-        mask_image = np.zeros_like(img, np.uint8)
-        mask = np.zeros_like(img, np.uint8)
         Knockout_image = img.copy()
         # draw bbox
         x, y, w, h = [int(v) for v in bbox]
-        # print(x,y,w,h)
-        cv2.rectangle(mask_image, (x, y), (x + w, y + h), (255, 255, 255), cv2.FILLED)
         cv2.rectangle(Knockout_image, (x, y), (x + w, y + h), (0, 0, 0), cv2.FILLED)
-        mask = cv2.rectangle(mask, (x, y), (x + w, y + h), (1, 1, 1), cv2.FILLED)
-        onlyface = img * mask
-        return mask_image, Knockout_image, onlyface, img, None
+        return Knockout_image, img
 
     def generate(self, first_frm_file, first_frm_id):
         first_frm = Image.open(first_frm_file)
@@ -173,8 +161,7 @@ class VideoGenerator():
         out_path = os.path.join(sample_dir, '{}.mp4'.format(first_frm_id))
         vid_writer = cv2.VideoWriter(out_path, fourcc, 25, size)
 
-        # print(len(anno))
-        frm_crop = None
+        first_face_crop = None
         is_first = True
         fake_frm = None
         first_kp_img = None
@@ -187,7 +174,7 @@ class VideoGenerator():
             if len(bbox) >= 2:
                 bbox[0] = max(0, bbox[0])
                 bbox[1] = max(0, bbox[1])
-            # print("bbox ", bbox)
+
             if is_first:
                 is_first = False
                 draw_frm, frm_crop = self.draw_bbox_keypoints(np.asarray(first_frm), bbox, keypoint)
@@ -204,7 +191,7 @@ class VideoGenerator():
                 draw_frm, _ = self.draw_bbox_keypoints(np.asarray(first_frm), bbox, keypoint)
                 if draw_frm is None or frm_crop is None:
                     print("no bbox")
-                    if frm_crop is None:
+                    if first_face_crop is None:
                         vid_writer.write(frm)
                         continue
                     if fake_frm is None:
@@ -213,9 +200,9 @@ class VideoGenerator():
                         vid_writer.write(fake_frm)
                     continue
 
-                frm_crop_arr = Image.fromarray(frm_crop, 'RGB')
-                first_frm_tensor = self.transform(frm_crop_arr)
-                first_frm_tensor = first_frm_tensor.unsqueeze(0)
+                first_face_crop_arr = Image.fromarray(first_face_crop, 'RGB')
+                first_face_tensor = self.transform(first_face_crop_arr)
+                first_face_tensor = first_face_tensor.unsqueeze(0)
 
             first_kp = Image.fromarray(first_kp_img, 'RGB')
             img = Image.fromarray(draw_frm, 'RGB')
