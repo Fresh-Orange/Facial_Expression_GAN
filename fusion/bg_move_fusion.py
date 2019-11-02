@@ -50,6 +50,7 @@ def fusion(knockout_bg, bg_bbox, face, face_bbox):
 def knn_fusion(bg, body, body_alpha, bg_bbox, face, face_bbox):
     bg_bx, bg_by, bg_bw, bg_bh = [int(v) for v in bg_bbox]
     f_bx, f_by, f_bw, f_bh = [int(v) for v in face_bbox]
+    moving_bg = bg.copy()
     # print("bg_bbox", bg_bbox)
     # print("face_bbox", face_bbox)
     heigth, width, _ = body.shape
@@ -64,6 +65,7 @@ def knn_fusion(bg, body, body_alpha, bg_bbox, face, face_bbox):
     ratio_h = f_bh / bg_bh  # 长度压缩比
     heigth, width , _ = body.shape
     # print("new shape", body.shape)
+    moving_bg = cv2.resize(moving_bg, (int(width * ratio_w), int(heigth * ratio_h)))
     body = cv2.resize(body, (int(width*ratio_w), int(heigth*ratio_h)))
     body_alpha = cv2.resize(body_alpha, (int(width*ratio_w), int(heigth*ratio_h)))
 
@@ -85,6 +87,8 @@ def knn_fusion(bg, body, body_alpha, bg_bbox, face, face_bbox):
     body_alpha = cv2.copyMakeBorder(body_alpha, 1000, 0, 1000 - left_padding, 1000 - right_padding, value=0,
                               borderType=cv2.BORDER_CONSTANT)  # 身体向下填充 pad only bottom
 
+    moving_bg = cv2.copyMakeBorder(moving_bg, 1000, 1000, 1000, 1000, cv2.BORDER_CONSTANT, value=(0, 0, 0))
+
     #cv2.imwrite("knockout_bg.jpg", knockout_bg)
 
     relative_bg_bbox = [bg_bx / width * no_pad_w + 1000, bg_by / heigth * no_pad_h + 1000, body.shape[1], body.shape[0]]
@@ -101,11 +105,17 @@ def knn_fusion(bg, body, body_alpha, bg_bbox, face, face_bbox):
     up = bg_by - f_by
     bottom = up + heigth
 
+    mask = numpy.mean(moving_bg[up:bottom, left:right, :], axis=2)
+    white_bord[500:-500, 500:-500, 0] = numpy.where(mask < 1, white_bord[500:-500, 500:-500, 0],
+                                                    moving_bg[up:bottom, left:right, 0])
+    white_bord[500:-500, 500:-500, 1] = numpy.where(mask < 1, white_bord[500:-500, 500:-500, 1],
+                                                    moving_bg[up:bottom, left:right, 1])
+    white_bord[500:-500, 500:-500, 2] = numpy.where(mask < 1, white_bord[500:-500, 500:-500, 2],
+                                                    moving_bg[up:bottom, left:right, 2])
+
+
     # print("corner", left, right, up, bottom)
     mask = numpy.mean(body[up:bottom, left:right, :], axis=2)
-    # white_bord[500:-500, 500:-500, 0] = numpy.where(mask < 0.1, white_bord[500:-500,500:-500, 0], body[up:bottom, left:right, 0])
-    # white_bord[500:-500, 500:-500, 1] = numpy.where(mask < 0.1, white_bord[500:-500,500:-500, 1], body[up:bottom, left:right, 1])
-    # white_bord[500:-500, 500:-500, 2] = numpy.where(mask < 0.1, white_bord[500:-500,500:-500, 2], body[up:bottom, left:right, 2])
 
     white_bord[500:-500, 500:-500, 0] = (1-body_alpha[up:bottom, left:right])*white_bord[500:-500, 500:-500, 0] + \
                                         body_alpha[up:bottom, left:right]*body[up:bottom, left:right, 0]
