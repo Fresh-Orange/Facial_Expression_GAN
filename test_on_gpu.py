@@ -114,7 +114,11 @@ class VideoGenerator():
                 bbox = ann['bbox']
                 vid_anns[name][idx] = [bbox, keypoints]
         return vid_anns
-    def draw_bbox_keypoints(self, img, bbox, keypoint):
+
+
+    def draw_rotate_keypoints(self, img, bbox, keypoint):
+        flags = list()
+        points = list()
         # can not detect face in some images
         if len(bbox) == 0:
             return None, None
@@ -122,10 +126,59 @@ class VideoGenerator():
         # draw bbox
         bx, by, bw, bh = [int(v) for v in bbox]
 
+
         for i in range(0, len(keypoint), 3):
             x, y, flag = [int(k) for k in keypoint[i: i + 3]]
             x = int((x - bx) / bw * 224)
             y = int((y - by) / bh * 224)
+            flags.append(flag)
+            points.append([x, y])
+            if flag == 0:  # keypoint not exist
+                continue
+            elif flag == 1 or flag == 2: # keypoint exist and visible
+                cv2.circle(points_image, (x, y), 2, (0, 255, 0), -1)
+            else:
+                raise ValueError("flag of keypoint must be 0, 1, or 2.")
+
+        # 脸部对齐
+        # 52是左眼的最左边， 61是右眼的最右边, x是宽度方向，y是高度方向
+        if not (flags[52] == 0 or flags[61] == 0):
+            left_x, left_y = points[52]
+            right_x, right_y = points[61]
+            deltaH = right_y - left_y
+            deltaW = right_x - left_x
+            if math.sqrt(deltaW**2 + deltaH**2) < 1:
+                return np.asarray(points_image), 0
+            angle = math.asin(deltaH / math.sqrt(deltaW**2 + deltaH**2))
+            angle = angle / math.pi * 180  # 弧度转角度
+
+            if abs(angle) < 5:
+                return np.asarray(points_image), 0
+            points_image = Image.fromarray(np.uint8(points_image))
+            points_image = points_image.rotate(angle)
+        else:
+            angle = 0
+
+        return np.asarray(points_image), angle
+
+
+    def draw_bbox_keypoints(self, img, bbox, keypoint):
+        flags = list()
+        points = list()
+        # can not detect face in some images
+        if len(bbox) == 0:
+            return None, None
+        points_image = np.zeros((224, 224, 3), np.uint8)
+        # draw bbox
+        bx, by, bw, bh = [int(v) for v in bbox]
+
+
+        for i in range(0, len(keypoint), 3):
+            x, y, flag = [int(k) for k in keypoint[i: i + 3]]
+            x = int((x - bx) / bw * 224)
+            y = int((y - by) / bh * 224)
+            flags.append(flag)
+            points.append([x, y])
             if flag == 0:  # keypoint not exist
                 continue
             elif flag == 1:  # keypoint exist but invisible
@@ -134,7 +187,9 @@ class VideoGenerator():
                 cv2.circle(points_image, (x, y), 2, (0, 255, 0), -1)
             else:
                 raise ValueError("flag of keypoint must be 0, 1, or 2.")
+
         return points_image, self.crop_face(img, bbox, keypoint)
+
 
 
     def extract_image(self, img, bbox):
@@ -144,6 +199,8 @@ class VideoGenerator():
         x, y, w, h = [int(v) for v in bbox]
         cv2.rectangle(Knockout_image, (x, y), (x + w, y + h), (0, 0, 0), cv2.FILLED)
         return Knockout_image, img
+
+
 
     def generate(self, first_frm_file, first_frm_id):
         first_frm = Image.open(first_frm_file)
