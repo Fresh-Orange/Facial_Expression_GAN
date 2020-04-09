@@ -121,7 +121,7 @@ def render_video(first_frm, anno, out):
 def main():
     json_path = r"D:\AI_data\expression_transfer\face_test_dataset\face\face_keypoint_test.json"
     vid_annos = load_json(json_path)
-    for vid in range(12040, 12050):
+    for vid in range(12097, 12098):
         vid_path = r'D:\AI_data\expression_transfer\face_test_dataset\face\test_first_frame\{}.jpg'.format(vid)
         assert os.path.exists(vid_path)
         vid_name = os.path.basename(vid_path)
