@@ -5,8 +5,26 @@ python3 main.py --resume_iter 14000 --gpu 1 --version 256-level2 --dataset_level
 python3 main.py --resume_iter 54000 --gpu 2 --version 256-level23 --dataset_level middle hard --lambda_fake 0.1 --lambda_l1 8 \
 --lambda_feature 2  --lambda_keypoint 50 --lambda_rec 2
 
+python3 main_id.py --resume_iter 0 --gpu 1 --version 256-level2_ID --dataset_level middle --lambda_fake 0.1 --lambda_id 0.1 --lambda_l1 8 \
+--lambda_feature 2  --lambda_keypoint 50
 
-训练集上效果不错，但是测试集上转头的情况不好：
-python3 main.py --resume_iter 17000 --gpu 1 --version 256-level2 --dataset_level middle --lambda_fake 0.1 --lambda_l1 8 \
---lambda_feature 2  --lambda_keypoint 50 --lambda_rec 2
+python3 test_on_gpu.py --resume_iter 11000 --gpu 4 --version 256-level2_ID --test_image 11048
+
+python3 main_id.py --resume_iter 10000 --gpu 2 --version 256-level2_ID --dataset_level middle --lambda_fake 0.1 --lambda_id 0.1 --lambda_l1 0 \
+--lambda_feature 0  --lambda_keypoint 50
+
+
+python3 main_fusion.py --resume_iter 1000 --gpu 5 --version 256-level2_ID --dataset_level middle --lambda_fake 0.1 --lambda_id 0.5 --lambda_l1 8 \
+ --lambda_feature 2  --lambda_keypoint 50
+
+python3 main_fusion_v3.py --resume_iter 0 --gpu 6 --version level2_fusion_v3 --dataset_level middle --lambda_fake 0.1 --lambda_id 0.5 --lambda_l1 8 \
+ --lambda_feature 2  --lambda_keypoint 50
+
+python3 main_fusion_v3.py --resume_iter 50000 --gpu 6 --version level2_fusion_v3 --dataset_level middle --lambda_fake 0.1 --lambda_id 1 --lambda_l1 2  --lambda_feature 4  --lambda_keypoint 50
+
+训练集上效果不错，但是测试集上转头的情况不好：python3 main.py --resume_iter 17000 --gpu 1 --version 256-level2 --dataset_level middle --lambda_fake 0.1 --lambda_l1 8 --lambda_feature 2  --lambda_keypoint 50 --lambda_rec 2
+
+
+目前最好：
+python3 main_id.py --resume_iter 81000 --gpu 7 --version 256-level1_ID --dataset_level easy --lambda_fake 0.1 --lambda_id 0.1 --lambda_l1 16 --lambda_feature 2  --lambda_keypoint 50 --lambda_rec 2
 
