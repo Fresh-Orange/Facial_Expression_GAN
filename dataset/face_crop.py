@@ -43,6 +43,22 @@ def crop_face(img, bbox, keypoint):
     crop_img = img[y:y+h, x:x+w]
     return crop_img
 
+
+def crop_big_face(img, bbox, keypoint):
+    flags = list()
+    points = list()
+
+    # can not detect face in some images
+    if len(bbox) == 0:
+        return None
+
+    img = cv2.copyMakeBorder(img, 500, 500, 500, 500, cv2.BORDER_REPLICATE)  # 背景的边缘扩展
+
+    # draw bbox
+    x, y, w, h = [int(v) for v in bbox]
+    crop_img = img[y:y+h, x:x+w]
+    return crop_img
+
 def draw_bbox_keypoints(img, bbox, keypoint):
     flags = list()
     points = list()
@@ -60,9 +76,10 @@ def draw_bbox_keypoints(img, bbox, keypoint):
     # draw points
     for i in range(0, len(keypoint), 3):
         x, y, flag = [int(k) for k in keypoint[i: i+3]]
-        #flags.append( flag )
+        flags.append(flag)
         x = int((x - bx) / bw * 224)
         y = int((y - by) / bh * 224)
+        points.append((x, y))
         #points.append( [int((x - bx) / bw * 224), int((y - by) / bh * 224)] )
         if flag == 0:      # keypoint not exist
             continue
