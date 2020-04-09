@@ -47,10 +47,10 @@ def fusion(knockout_bg, bg_bbox, face, face_bbox):
     return white_bord
 
 
-def knn_fusion(bg, body, body_alpha, bg_bbox, face, face_bbox):
+def knn_fusion(bg_body, bg, body, body_alpha, bg_bbox, face, face_bbox):
     bg_bx, bg_by, bg_bw, bg_bh = [int(v) for v in bg_bbox]
     f_bx, f_by, f_bw, f_bh = [int(v) for v in face_bbox]
-    moving_bg = bg.copy()
+    moving_bg = bg_body.copy()
     # print("bg_bbox", bg_bbox)
     # print("face_bbox", face_bbox)
     heigth, width, _ = body.shape
@@ -87,7 +87,7 @@ def knn_fusion(bg, body, body_alpha, bg_bbox, face, face_bbox):
     body_alpha = cv2.copyMakeBorder(body_alpha, 1000, 0, 1000 - left_padding, 1000 - right_padding, value=0,
                               borderType=cv2.BORDER_CONSTANT)  # 身体向下填充 pad only bottom
 
-    moving_bg = cv2.copyMakeBorder(moving_bg, 1000, 1000, 1000, 1000, cv2.BORDER_CONSTANT, value=(0, 0, 0))
+    moving_bg = cv2.copyMakeBorder(moving_bg[:, :-5], 1000, 1000, 1000, 1005, cv2.BORDER_CONSTANT, value=(0, 0, 0))
 
     #cv2.imwrite("knockout_bg.jpg", knockout_bg)
 
@@ -105,13 +105,15 @@ def knn_fusion(bg, body, body_alpha, bg_bbox, face, face_bbox):
     up = bg_by - f_by
     bottom = up + heigth
 
-    mask = numpy.mean(moving_bg[up:bottom, left:right, :], axis=2)
-    white_bord[500:-500, 500:-500, 0] = numpy.where(mask < 1, white_bord[500:-500, 500:-500, 0],
-                                                    moving_bg[up:bottom, left:right, 0])
-    white_bord[500:-500, 500:-500, 1] = numpy.where(mask < 1, white_bord[500:-500, 500:-500, 1],
-                                                    moving_bg[up:bottom, left:right, 1])
-    white_bord[500:-500, 500:-500, 2] = numpy.where(mask < 1, white_bord[500:-500, 500:-500, 2],
-                                                    moving_bg[up:bottom, left:right, 2])
+    # moving background
+    # if numpy.std(bg) > 30:
+    #     mask = numpy.mean(moving_bg[up:bottom, left:right, :], axis=2)
+    #     white_bord[500:-500, 500:-500, 0] = numpy.where(mask < 1, white_bord[500:-500, 500:-500, 0],
+    #                                                     moving_bg[up:bottom, left:right, 0])
+    #     white_bord[500:-500, 500:-500, 1] = numpy.where(mask < 1, white_bord[500:-500, 500:-500, 1],
+    #                                                     moving_bg[up:bottom, left:right, 1])
+    #     white_bord[500:-500, 500:-500, 2] = numpy.where(mask < 1, white_bord[500:-500, 500:-500, 2],
+    #                                                     moving_bg[up:bottom, left:right, 2])
 
 
     # print("corner", left, right, up, bottom)
@@ -126,7 +128,28 @@ def knn_fusion(bg, body, body_alpha, bg_bbox, face, face_bbox):
 
 
     # 画人脸
-    white_bord[f_by+500+1:f_by+f_bh+500+1, f_bx+500+1:f_bx+f_bw+500+1] = face[:, :]
+    white_bord[f_by + 500 + 1:f_by + f_bh + 500 + 1,
+    f_bx + 500 + 1:f_bx + f_bw + 500 + 1] = face[:, :]
+
+    # 画人脸，使用人脸融合
+    # diff_face = white_bord[f_by + 500 + 1:f_by + f_bh + 500 + 1, f_bx + 500 + 1:f_bx + f_bw + 500 + 1] - face[:, :]
+    # mask = numpy.mean(diff_face, axis=2)
+    # weights = numpy.exp(-mask / 50)
+    # white_bord[f_by + 500 + 1:f_by + f_bh + 500 + 1, f_bx + 500 + 1:f_bx + f_bw + 500 + 1, 0] = numpy.where(mask < 50,
+    #                                                                                                         face[:, :,0] + weights*diff_face[:, :, 0],
+    #                                                                                                         face[:, :,0])
+    # white_bord[f_by + 500 + 1:f_by + f_bh + 500 + 1, f_bx + 500 + 1:f_bx + f_bw + 500 + 1, 1] = numpy.where(mask < 50,
+    #                                                                                                         face[:, :,1] + weights * diff_face[:,:,1],
+    #                                                                                                         face[:, :,1])
+    # white_bord[f_by + 500 + 1:f_by + f_bh + 500 + 1, f_bx + 500 + 1:f_bx + f_bw + 500 + 1, 2] = numpy.where(mask < 50,
+    #                                                                                                         face[:, :,2] + weights * diff_face[:,:,2],
+    #                                                                                                         face[:, :,2])
+    #
+    # #
+    #
+    # border_size = 20
+    # white_bord[f_by + 500 + 1 + border_size:f_by + f_bh + 500 + 1 - border_size,
+    #     f_bx + 500 + 1 + border_size:f_bx + f_bw + 500 + 1 - border_size] = face[border_size:-border_size, border_size:-border_size]
 
     white_bord = white_bord[500:-500,500:-500]
 
