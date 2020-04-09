@@ -6,7 +6,7 @@ import torch
 from model.model import LandMarksDetect, SNResRealFakeDiscriminator, ExpressionGenerater, FeatureExtractNet, SNResIdDiscriminator
 from torchvision.utils import save_image
 import sys
-from Logger import Logger
+from utils.Logger import Logger
 from torch.nn.functional import softplus
 
 
@@ -188,7 +188,7 @@ def main(config):
         #                               3. Train the generator                                #
         # =================================================================================== #
 
-        n_critic = 4
+        n_critic = 1
         if (i + 1) % n_critic == 0:
             # Original-to-target domain.
             faces_fake = G(faces, target_points)

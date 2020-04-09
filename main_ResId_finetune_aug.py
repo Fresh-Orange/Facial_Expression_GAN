@@ -6,7 +6,7 @@ import torch
 from model.model import LandMarksDetect, SNResRealFakeDiscriminator, ExpressionGenerater, FeatureExtractNet, SNResIdDiscriminator
 from torchvision.utils import save_image
 import sys
-from Logger import Logger
+from utils.Logger import Logger
 from torch.nn.functional import softplus
 
 
