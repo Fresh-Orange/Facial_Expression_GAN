@@ -1,13 +1,17 @@
+#
+# 1. 使用了关键点判别器的版本，同时保留关键点检测器
+# 2. 判别器使用SNRes版本
+#
 import os
 import argparse
 from data_loder import data_loader
 from torch.backends import cudnn
 import torch
-from model.model import LandMarksDetect, RealFakeDiscriminator, ExpressionGenerater, FeatureExtractNet
+from model.model import SNResRealFakeDiscriminator, ExpressionGenerater, SNResIdDiscriminator, SNResKeypointDiscriminator
 from torchvision.utils import save_image
 import sys
 from utils.Logger import Logger
-
+from torch.nn.functional import softplus
 
 device = None
 
@@ -24,20 +28,6 @@ def to_image(x):
     im = ndarr
     return im
 
-
-def gradient_penalty(y, x):
-    """Compute gradient penalty: (L2_norm(dy/dx) - 1)**2."""
-    weight = torch.ones(y.size()).to(device)
-    dydx = torch.autograd.grad(outputs=y,
-                               inputs=x,
-                               grad_outputs=weight,
-                               retain_graph=True,
-                               create_graph=True,
-                               only_inputs=True)[0]
-
-    dydx = dydx.view(dydx.size(0), -1)
-    dydx_l2norm = torch.sqrt(torch.sum(dydx**2, dim=1))
-    return torch.mean((dydx_l2norm-1)**2)
 
 def main(config):
     # For fast training.
@@ -56,14 +46,18 @@ def main(config):
 
     loader = data_loader.get_loader("/media/data2/laixc/AI_DATA/expression_transfer/face12/crop_face",
                                          "/media/data2/laixc/AI_DATA/expression_transfer/face12/points_face", config)
-    points_G = LandMarksDetect()
     G = ExpressionGenerater()
-    D = RealFakeDiscriminator()
-    FEN = FeatureExtractNet()
+    D = SNResRealFakeDiscriminator()
+    #FEN = FeatureExtractNet()
+    id_D = SNResIdDiscriminator()
+    kp_D = SNResKeypointDiscriminator()
+    #points_G = LandMarksDetect()
 
     #######   载入预训练网络   ######
     resume_iter = config.resume_iter
     ckpt_dir = "/media/data2/laixc/Facial_Expression_GAN/ckpt-{}".format(version)
+    if not os.path.isdir(ckpt_dir):
+        os.mkdir(ckpt_dir)
     log = Logger(os.path.join(ckpt_dir,
                               'log.txt'))
     if os.path.exists(os.path.join(ckpt_dir,
@@ -76,25 +70,37 @@ def main(config):
                               '{}-D.ckpt'.format(resume_iter))
         D.load_state_dict(torch.load(D_path, map_location=lambda storage, loc: storage))
 
-        points_G_path = os.path.join(ckpt_dir,
-                                     '{}-pG.ckpt'.format(resume_iter))
-        points_G.load_state_dict(torch.load(points_G_path, map_location=lambda storage, loc: storage))
+        IdD_path = os.path.join(ckpt_dir,
+                              '{}-idD.ckpt'.format(resume_iter))
+        id_D.load_state_dict(torch.load(IdD_path, map_location=lambda storage, loc: storage))
+
+        kp_D_path = os.path.join(ckpt_dir,
+                                     '{}-kpD.ckpt'.format(resume_iter))
+        kp_D.load_state_dict(torch.load(kp_D_path, map_location=lambda storage, loc: storage))
+
+        #points_G_path = os.path.join(ckpt_dir,
+        #                            '{}-pG.ckpt'.format(resume_iter))
+        #points_G.load_state_dict(torch.load(points_G_path, map_location=lambda storage, loc: storage))
     else:
         resume_iter = 0
 
 
     #####  训练face2keypoint   ####
-    points_G_optimizer = torch.optim.Adam(points_G.parameters(), lr=0.0001, betas=(0.5, 0.9))
+    #points_G_optimizer = torch.optim.Adam(points_G.parameters(), lr=0.0001, betas=(0.5, 0.9))
+    kp_D_optimizer = torch.optim.Adam(kp_D.parameters(), lr=0.0001, betas=(0.5, 0.9))
     G_optimizer = torch.optim.Adam(G.parameters(), lr=0.0001, betas=(0.5, 0.9))
     D_optimizer = torch.optim.Adam(D.parameters(), lr=0.001, betas=(0.5, 0.9))
+    idD_optimizer = torch.optim.Adam(id_D.parameters(), lr=0.001, betas=(0.5, 0.9))
     G.to(device)
+    id_D.to(device)
     D.to(device)
-    points_G.to(device)
-    FEN.to(device)
+    kp_D.to(device)
+    #points_G.to(device)
+    #FEN.to(device)
 
-    FEN.eval()
+    #FEN.eval()
 
-
+    log.print(config)
 
     # Start training from scratch or resume training.
     start_iters = resume_iter
@@ -129,22 +135,44 @@ def main(config):
         # =================================================================================== #
 
         # Real fake Dis
-        real_loss = - torch.mean(D(faces))  # big for real
+        real_loss = torch.mean(softplus(-D(faces)))  # big for real
         faces_fake = G(faces, target_points)
-        fake_loss = torch.mean(D(faces_fake))  # small for fake
+        fake_loss = torch.mean(softplus(D(faces_fake)))  # small for fake
 
-        # Compute loss for gradient penalty.
-        alpha = torch.rand(faces.size(0), 1, 1, 1).to(device)
-        x_hat = (alpha * faces.data + (1 - alpha) * faces_fake.data).requires_grad_(True)
-        out_src = D(x_hat)
-        d_loss_gp = gradient_penalty(out_src, x_hat)
 
-        lambda_gp = 10
-        Dis_loss = real_loss + fake_loss + lambda_gp * d_loss_gp
+        Dis_loss = real_loss + fake_loss
 
         D_optimizer.zero_grad()
         Dis_loss.backward()
         D_optimizer.step()
+
+        # ID Dis
+        d_real = softplus(-id_D(faces, target_faces))
+        #print("d_real", d_real)
+        id_real_loss = torch.mean(d_real)  # big for real
+        faces_fake = G(faces, target_points)
+        d_fake = softplus(id_D(faces, faces_fake))
+        #print("d_fake", d_fake)
+        id_fake_loss = torch.mean(d_fake)  # small for fake
+
+
+        id_Dis_loss = id_real_loss + id_fake_loss
+
+        idD_optimizer.zero_grad()
+        id_Dis_loss.backward()
+        idD_optimizer.step()
+
+        # Keypoints Dis
+        kp_real_loss = torch.mean(softplus(-kp_D(target_faces, target_points)))  # big for real
+        faces_fake = G(faces, target_points)
+        kp_fake_loss = torch.mean(softplus(kp_D(faces_fake, target_points)))  # small for fake
+
+        kp_lambda_gp = 10
+        kp_Dis_loss = kp_real_loss + kp_fake_loss
+
+        kp_D_optimizer.zero_grad()
+        kp_Dis_loss.backward()
+        kp_D_optimizer.step()
 
 
         # if (i + 1) % 5 == 0:
@@ -153,42 +181,27 @@ def main(config):
         #                                                                                              lambda_gp * d_loss_gp
         #                                                                                              ))
 
-        # =================================================================================== #
-        #                               3. Train the keypointsDetecter                        #
-        # =================================================================================== #
 
-        points_detect = points_G(faces)
-        detecter_loss_clear = torch.mean(torch.abs(points_detect - origin_points))
-        # faces_fake = G(faces, target_points)
-        # reconstructs = G(faces_fake, origin_points)
-        # detecter_loss_vague = torch.mean(torch.abs(points_G(reconstructs) - origin_points))
-        #
-        # lambda_vague = 0.1
-        # detecter_loss = detecter_loss_clear + lambda_vague*detecter_loss_vague
-        detecter_loss = detecter_loss_clear
-        points_G_optimizer.zero_grad()
-        detecter_loss.backward()
-        points_G_optimizer.step()
 
         # =================================================================================== #
         #                               3. Train the generator                                #
         # =================================================================================== #
 
-        n_critic = 5
+        n_critic = 1
         if (i + 1) % n_critic == 0:
             # Original-to-target domain.
             faces_fake = G(faces, target_points)
-            predict_points = points_G(faces_fake)
-            g_keypoints_loss = torch.mean(torch.abs(predict_points - target_points))
+            g_keypoints_loss = torch.mean(softplus(-kp_D(faces_fake, target_points)))
 
-            g_fake_loss = - torch.mean(D(faces_fake))
+            g_fake_loss = torch.mean(softplus(-D(faces_fake)))
 
-            reconstructs = G(faces_fake, origin_points)
-            g_cycle_loss = torch.mean(torch.abs(reconstructs - faces))
+            # reconstructs = G(faces_fake, origin_points)
+            # g_cycle_loss = torch.mean(torch.abs(reconstructs - faces))
+            g_id_loss = torch.mean(softplus(-id_D(faces, faces_fake)))
 
             l1_loss = torch.mean(torch.abs(faces_fake - target_faces))
 
-            feature_loss = torch.mean(torch.abs(FEN(faces_fake) - FEN(target_faces)))
+            #feature_loss = torch.mean(torch.abs(FEN(faces_fake) - FEN(target_faces)))
 
             # 轮流训练
             # if (i+1) % 50 == 0:
@@ -198,38 +211,39 @@ def main(config):
             lambda_l1 = config.lambda_l1
             lambda_keypoint = config.lambda_keypoint   # 100 to 50
             lambda_fake = config.lambda_fake
+            lambda_id = config.lambda_id
             lambda_feature = config.lambda_feature
             g_loss = lambda_keypoint * g_keypoints_loss + lambda_fake*g_fake_loss \
-                     + lambda_rec * g_cycle_loss + lambda_l1 * l1_loss + lambda_feature*feature_loss
+                      + lambda_id * g_id_loss + lambda_l1 * l1_loss# + lambda_feature*feature_loss
 
             G_optimizer.zero_grad()
             g_loss.backward()
             G_optimizer.step()
 
             # Print out training information.
-            if (i + 1) % 5 == 0:
-                log.print("iter {} - d_real_loss {:.2}, d_fake_loss {:.2}, d_loss_gp {:.2} , g_keypoints_loss {:.2}, "
-                      "g_fake_loss {:.2}, g_cycle_loss {:.2}, L1_loss {:.2}, detecter_loss {:.2}, feature_loss {:.2}".format(i, real_loss.item(), fake_loss.item(), lambda_gp * d_loss_gp
+            if (i + 1) % 4 == 0:
+                log.print("iter {} - d_real_loss {:.2}, d_fake_loss {:.2}, id_real_loss {:.2}, "
+                      "id_fake_loss {:.2} , g_keypoints_loss {:.2}, "
+                      "g_fake_loss {:.2}, g_id_loss {:.2}, L1_loss {:.2}".format(i, real_loss.item(), fake_loss.item()
+                                                                                                     ,id_real_loss.item(), id_fake_loss.item()
                                                                , lambda_keypoint*g_keypoints_loss.item(), lambda_fake*g_fake_loss.item()
-                                                               , lambda_rec*g_cycle_loss.item(), lambda_l1 * l1_loss, detecter_loss.item(),
-                                                                                                                    lambda_feature *feature_loss.item()))
+                                                                ,lambda_id * g_id_loss.item(), lambda_l1 * l1_loss))
 
             sample_dir = "gan-sample-{}".format(version)
             if not os.path.isdir(sample_dir):
                 os.mkdir(sample_dir)
-            if (i + 1) % 50 == 0:
+            if (i + 1) % 24 == 0:
                 with torch.no_grad():
                     target_point = target_points[0]
                     fake_face = faces_fake[0]
                     face = faces[0]
-                    reconstruct = reconstructs[0]
-                    predict_point = predict_points[0]
+                    #reconstruct = reconstructs[0]
 
                     sample_path_face = os.path.join(sample_dir, '{}-image-face.jpg'.format(i + 1))
                     save_image(denorm(face.data.cpu()), sample_path_face)
 
-                    sample_path_rec = os.path.join(sample_dir, '{}-image-reconstruct.jpg'.format(i + 1))
-                    save_image(denorm(reconstruct.data.cpu()), sample_path_rec)
+                    # sample_path_rec = os.path.join(sample_dir, '{}-image-reconstruct.jpg'.format(i + 1))
+                    # save_image(denorm(reconstruct.data.cpu()), sample_path_rec)
 
                     sample_path_fake = os.path.join(sample_dir, '{}-image-fake.jpg'.format(i + 1))
                     save_image(denorm(fake_face.data.cpu()), sample_path_fake)
@@ -237,10 +251,8 @@ def main(config):
                     sample_path_target = os.path.join(sample_dir, '{}-image-target_point.jpg'.format(i + 1))
                     save_image(denorm(target_point.data.cpu()), sample_path_target)
 
-                    sample_path_predict_points = os.path.join(sample_dir, '{}-image-predict_point.jpg'.format(i + 1))
-                    save_image(denorm(predict_point.data.cpu()), sample_path_predict_points)
 
-                    print('Saved real and fake images into {}...'.format(sample_path_rec))
+                    print('Saved real and fake images into {}...'.format(sample_path_face))
 
 
         # Save model checkpoints.
@@ -249,12 +261,14 @@ def main(config):
         if (i + 1) % 1000 == 0:
             if not os.path.isdir(model_save_dir):
                 os.mkdir(model_save_dir)
-            point_G_path = os.path.join(model_save_dir, '{}-pG.ckpt'.format(i + 1))
-            torch.save(points_G.state_dict(), point_G_path)
+            kp_D_path = os.path.join(model_save_dir, '{}-kpD.ckpt'.format(i + 1))
+            torch.save(kp_D.state_dict(), kp_D_path)
             G_path = os.path.join(model_save_dir, '{}-G.ckpt'.format(i + 1))
             torch.save(G.state_dict(), G_path)
             D_path = os.path.join(model_save_dir, '{}-D.ckpt'.format(i + 1))
             torch.save(D.state_dict(), D_path)
+            idD_path = os.path.join(model_save_dir, '{}-idD.ckpt'.format(i + 1))
+            torch.save(id_D.state_dict(), idD_path)
             print('Saved model checkpoints into {}...'.format(model_save_dir))
 
 
@@ -270,7 +284,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--lambda_l1', type=float, default=4)
     parser.add_argument('--lambda_rec', type=float, default=8)
-    parser.add_argument('--lambda_keypoint', type=float, default=50)
+    parser.add_argument('--lambda_keypoint', type=float, default=0.1)
     parser.add_argument('--lambda_fake', type=float, default=0.1)
     parser.add_argument('--lambda_id', type=float, default=0.1)
     parser.add_argument('--lambda_feature', type=float, default=2)

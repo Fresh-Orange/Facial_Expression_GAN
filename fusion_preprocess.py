@@ -82,7 +82,7 @@ def extract_image(img, bbox, keypoint):
 
     # can not detect face in some images
     if len(bbox) == 0:
-        return None, None, None, None
+        return None, None, None, None, None
 
     mask_image = np.zeros_like(img, np.uint8)
     mask = np.zeros_like(img, np.uint8)
@@ -93,11 +93,12 @@ def extract_image(img, bbox, keypoint):
     x, y, w, h = [int(v) for v in bbox]
     cv2.rectangle(mask_image, (x, y), (x+w, y+h), (255, 255, 255), cv2.FILLED)
 
-    cv2.rectangle(Knockout_image, (x, y), (x + w, y + h), (0, 0, 0), cv2.FILLED)
+    #cv2.rectangle(Knockout_image, (x, y), (x + w, y + h), (0, 0, 0), cv2.FILLED)
 
-    mask = cv2.rectangle(mask, (x, y), (x+w, y+h), (1, 1, 1), cv2.FILLED)
+    #mask = cv2.rectangle(mask, (x, y), (x+w, y+h), (1, 1, 1), cv2.FILLED)
 
-    onlyface = img*mask
+    #onlyface = img*mask
+    onlyface = None
 
     mask_points = mask_image.copy()
     # draw points

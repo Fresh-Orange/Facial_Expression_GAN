@@ -1,10 +1,8 @@
 import os
-import argparse
-from solver import Solver
-import data_loader
+from data_loder import data_loader
 from torch.backends import cudnn
 import torch
-from model import LandMarksDetect
+from model.model import LandMarksDetect
 from torchvision.utils import save_image
 
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
